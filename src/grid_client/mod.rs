@@ -56,10 +56,12 @@ pub use types::{
     VmSpec, VmSpecBuilder, VolumeMountSpec,
 };
 
-const DEVNET_SUBSTRATE_URL: &str = "wss://tfchain.dev.grid.tf/ws";
-const DEVNET_GRID_PROXY_URL: &str = "https://gridproxy.dev.grid.tf";
-const DEVNET_RELAY_URL: &str = "wss://relay.dev.grid.tf";
 const RMB_SCHEMA: &str = "application/json";
+
+pub const DEV_NETWORK: &str = "dev";
+pub const QA_NETWORK: &str = "qa";
+pub const TEST_NETWORK: &str = "test";
+pub const MAIN_NETWORK: &str = "main";
 
 #[derive(Debug, Clone)]
 pub struct GridClient {
@@ -77,9 +79,17 @@ pub struct GridClient {
 
 #[derive(Debug, Clone)]
 pub struct GridClientConfig {
+    pub network: String,
     pub substrate_url: String,
     pub grid_proxy_url: String,
+    pub graphql_url: String,
     pub relay_url: String,
+    pub substrate_urls: Vec<String>,
+    pub grid_proxy_urls: Vec<String>,
+    pub graphql_urls: Vec<String>,
+    pub relay_urls: Vec<String>,
+    pub kyc_url: String,
+    pub sentry_dsn: String,
     pub http_timeout: Duration,
     pub rmb_timeout: Duration,
 }
@@ -92,18 +102,61 @@ impl Default for GridClientConfig {
 
 impl GridClientConfig {
     pub fn devnet() -> Self {
-        Self {
-            substrate_url: DEVNET_SUBSTRATE_URL.to_string(),
-            grid_proxy_url: DEVNET_GRID_PROXY_URL.to_string(),
-            relay_url: DEVNET_RELAY_URL.to_string(),
-            http_timeout: Duration::from_secs(30),
-            rmb_timeout: Duration::from_secs(30),
+        Self::preset(DEV_NETWORK)
+    }
+
+    pub fn qanet() -> Self {
+        Self::preset(QA_NETWORK)
+    }
+
+    pub fn testnet() -> Self {
+        Self::preset(TEST_NETWORK)
+    }
+
+    pub fn mainnet() -> Self {
+        Self::preset(MAIN_NETWORK)
+    }
+
+    pub fn from_network(network: &str) -> Result<Self, GridError> {
+        let normalized = normalize_network_name(network);
+        if !matches!(
+            normalized,
+            DEV_NETWORK | QA_NETWORK | TEST_NETWORK | MAIN_NETWORK
+        ) {
+            return Err(GridError::validation(format!(
+                "unsupported network preset `{network}`"
+            )));
         }
+        Ok(Self::preset(normalized))
     }
 
     pub fn builder() -> GridClientConfigBuilder {
         GridClientConfigBuilder {
             config: Self::devnet(),
+        }
+    }
+
+    fn preset(network: &str) -> Self {
+        let (substrate_urls, grid_proxy_urls, graphql_urls, relay_urls, kyc_url, sentry_dsn) =
+            network_endpoints(network);
+        let substrate_urls = normalize_urls(substrate_urls);
+        let grid_proxy_urls = normalize_urls(grid_proxy_urls);
+        let graphql_urls = normalize_urls(graphql_urls);
+        let relay_urls = normalize_urls(relay_urls);
+        Self {
+            network: normalize_network_name(network).to_string(),
+            substrate_url: substrate_urls.first().cloned().unwrap_or_default(),
+            grid_proxy_url: grid_proxy_urls.first().cloned().unwrap_or_default(),
+            graphql_url: graphql_urls.first().cloned().unwrap_or_default(),
+            relay_url: relay_urls.first().cloned().unwrap_or_default(),
+            substrate_urls,
+            grid_proxy_urls,
+            graphql_urls,
+            relay_urls,
+            kyc_url,
+            sentry_dsn,
+            http_timeout: Duration::from_secs(30),
+            rmb_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -114,6 +167,16 @@ pub struct GridClientConfigBuilder {
 }
 
 impl GridClientConfigBuilder {
+    pub fn network(mut self, network: impl AsRef<str>) -> Self {
+        let http_timeout = self.config.http_timeout;
+        let rmb_timeout = self.config.rmb_timeout;
+        self.config = GridClientConfig::from_network(network.as_ref())
+            .unwrap_or_else(|_| panic!("unsupported network preset: {}", network.as_ref()));
+        self.config.http_timeout = http_timeout;
+        self.config.rmb_timeout = rmb_timeout;
+        self
+    }
+
     pub fn substrate_url(mut self, substrate_url: impl Into<String>) -> Self {
         self.config.substrate_url = substrate_url.into();
         self
@@ -124,8 +187,47 @@ impl GridClientConfigBuilder {
         self
     }
 
+    pub fn graphql_url(mut self, graphql_url: impl Into<String>) -> Self {
+        self.config.graphql_url = graphql_url.into();
+        self
+    }
+
     pub fn relay_url(mut self, relay_url: impl Into<String>) -> Self {
         self.config.relay_url = relay_url.into();
+        self
+    }
+
+    pub fn substrate_urls(mut self, substrate_urls: Vec<String>) -> Self {
+        self.config.substrate_urls = substrate_urls;
+        self.config.substrate_url.clear();
+        self
+    }
+
+    pub fn grid_proxy_urls(mut self, grid_proxy_urls: Vec<String>) -> Self {
+        self.config.grid_proxy_urls = grid_proxy_urls;
+        self.config.grid_proxy_url.clear();
+        self
+    }
+
+    pub fn graphql_urls(mut self, graphql_urls: Vec<String>) -> Self {
+        self.config.graphql_urls = graphql_urls;
+        self.config.graphql_url.clear();
+        self
+    }
+
+    pub fn relay_urls(mut self, relay_urls: Vec<String>) -> Self {
+        self.config.relay_urls = relay_urls;
+        self.config.relay_url.clear();
+        self
+    }
+
+    pub fn kyc_url(mut self, kyc_url: impl Into<String>) -> Self {
+        self.config.kyc_url = kyc_url.into();
+        self
+    }
+
+    pub fn sentry_dsn(mut self, sentry_dsn: impl Into<String>) -> Self {
+        self.config.sentry_dsn = sentry_dsn.into();
         self
     }
 
@@ -140,7 +242,142 @@ impl GridClientConfigBuilder {
     }
 
     pub fn build(self) -> GridClientConfig {
-        self.config
+        let mut config = self.config;
+        config.substrate_urls = normalize_urls(config.substrate_urls);
+        config.grid_proxy_urls = normalize_urls(config.grid_proxy_urls);
+        config.graphql_urls = normalize_urls(config.graphql_urls);
+        config.relay_urls = normalize_urls(config.relay_urls);
+        config.substrate_url = choose_primary(&config.substrate_url, &config.substrate_urls);
+        config.grid_proxy_url = choose_primary(&config.grid_proxy_url, &config.grid_proxy_urls);
+        config.graphql_url = choose_primary(&config.graphql_url, &config.graphql_urls);
+        config.relay_url = choose_primary(&config.relay_url, &config.relay_urls);
+        config
+    }
+}
+
+fn choose_primary(current: &str, urls: &[String]) -> String {
+    let normalized = normalize_url(current);
+    if !normalized.is_empty() {
+        return normalized;
+    }
+    urls.first().cloned().unwrap_or_default()
+}
+
+fn normalize_urls(urls: Vec<String>) -> Vec<String> {
+    urls.into_iter()
+        .map(|url| normalize_url(&url))
+        .filter(|url| !url.is_empty())
+        .collect()
+}
+
+fn normalize_url(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_string()
+}
+
+fn normalize_network_name(network: &str) -> &str {
+    match network.trim().to_ascii_lowercase().as_str() {
+        "dev" | "devnet" => DEV_NETWORK,
+        "qa" | "qanet" => QA_NETWORK,
+        "test" | "testnet" => TEST_NETWORK,
+        "main" | "mainnet" => MAIN_NETWORK,
+        _ => network.trim(),
+    }
+}
+
+fn network_endpoints(
+    network: &str,
+) -> (
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    Vec<String>,
+    String,
+    String,
+) {
+    match normalize_network_name(network) {
+        DEV_NETWORK => (
+            vec![
+                "wss://tfchain.dev.grid.tf/ws".to_string(),
+                "wss://tfchain.dev.threefold.me/ws".to_string(),
+            ],
+            vec![
+                "https://gridproxy.dev.grid.tf/".to_string(),
+                "https://gridproxy.dev.threefold.me/".to_string(),
+                "https://gridproxy.dev.ninja.tf/".to_string(),
+            ],
+            vec![
+                "https://graphql.dev.grid.tf/graphql".to_string(),
+                "https://graphql.dev.threefold.me/graphql".to_string(),
+            ],
+            vec!["wss://relay.dev.grid.tf".to_string()],
+            "https://kyc.dev.grid.tf".to_string(),
+            "https://af8a73b8282edc62c5b8bfa22da50acb@dev.sentry.grid.tf/4".to_string(),
+        ),
+        QA_NETWORK => (
+            vec![
+                "wss://tfchain.qa.grid.tf/ws".to_string(),
+                "wss://tfchain.qa.threefold.me/ws".to_string(),
+            ],
+            vec![
+                "https://gridproxy.qa.grid.tf/".to_string(),
+                "https://gridproxy.qa.threefold.me/".to_string(),
+                "https://gridproxy.qa.ninja.tf/".to_string(),
+            ],
+            vec![
+                "https://graphql.qa.grid.tf/graphql".to_string(),
+                "https://graphql.qa.threefold.me/graphql".to_string(),
+            ],
+            vec!["wss://relay.qa.grid.tf".to_string()],
+            "https://kyc.qa.grid.tf".to_string(),
+            "https://af8a73b8282edc62c5b8bfa22da50acb@dev.sentry.grid.tf/4".to_string(),
+        ),
+        TEST_NETWORK => (
+            vec![
+                "wss://tfchain.test.grid.tf/ws".to_string(),
+                "wss://tfchain.test.threefold.me/ws".to_string(),
+            ],
+            vec![
+                "https://gridproxy.test.grid.tf/".to_string(),
+                "https://gridproxy.test.threefold.me/".to_string(),
+            ],
+            vec![
+                "https://graphql.test.grid.tf/graphql".to_string(),
+                "https://graphql.test.threefold.me/graphql".to_string(),
+            ],
+            vec!["wss://relay.test.grid.tf".to_string()],
+            "https://kyc.test.grid.tf".to_string(),
+            "https://af8a73b8282edc62c5b8bfa22da50acb@dev.sentry.grid.tf/4".to_string(),
+        ),
+        MAIN_NETWORK => (
+            vec![
+                "wss://tfchain.grid.tf/ws".to_string(),
+                "wss://tfchain.be.grid.tf/ws".to_string(),
+                "wss://tfchain.grid.threefold.me/ws".to_string(),
+                "wss://tfchain.sg.grid.tf/ws".to_string(),
+                "wss://tfchain.us.grid.tf/ws".to_string(),
+                "wss://tfchain.grid.threefold.io/ws".to_string(),
+            ],
+            vec![
+                "https://gridproxy.grid.tf/".to_string(),
+                "https://gridproxy.be.grid.tf/".to_string(),
+                "https://gridproxy.grid.threefold.me/".to_string(),
+                "https://gridproxy.sg.grid.tf/".to_string(),
+                "https://gridproxy.us.grid.tf/".to_string(),
+                "https://gridproxy.grid.threefold.io/".to_string(),
+            ],
+            vec![
+                "https://graphql.grid.tf/graphql".to_string(),
+                "https://graphql.be.grid.tf/graphql".to_string(),
+                "https://graphql.grid.threefold.me/graphql".to_string(),
+                "https://graphql.sg.grid.tf/graphql".to_string(),
+                "https://graphql.us.grid.tf/graphql".to_string(),
+                "https://graphql.grid.threefold.io/graphql".to_string(),
+            ],
+            vec!["wss://relay.grid.tf".to_string()],
+            "https://kyc.grid.tf".to_string(),
+            "https://b16d2b5fcfbc87234bc180a4c574b45f@sentry.grid.tf/3".to_string(),
+        ),
+        other => panic!("unsupported network preset: {other}"),
     }
 }
 
@@ -330,6 +567,18 @@ mod rmb_envelope {
 impl GridClient {
     pub async fn devnet(mnemonic: &str) -> Result<Self, GridError> {
         Self::new(mnemonic, GridClientConfig::devnet()).await
+    }
+
+    pub async fn qanet(mnemonic: &str) -> Result<Self, GridError> {
+        Self::new(mnemonic, GridClientConfig::qanet()).await
+    }
+
+    pub async fn testnet(mnemonic: &str) -> Result<Self, GridError> {
+        Self::new(mnemonic, GridClientConfig::testnet()).await
+    }
+
+    pub async fn mainnet(mnemonic: &str) -> Result<Self, GridError> {
+        Self::new(mnemonic, GridClientConfig::mainnet()).await
     }
 
     pub async fn new(mnemonic: &str, config: GridClientConfig) -> Result<Self, GridError> {
@@ -2106,6 +2355,70 @@ mod tests {
         assert_eq!(config.relay_url, "wss://relay.example.test");
         assert_eq!(config.http_timeout, std::time::Duration::from_secs(10));
         assert_eq!(config.rmb_timeout, std::time::Duration::from_secs(15));
+    }
+
+    #[test]
+    fn grid_client_config_presets_match_named_networks() {
+        let qa = super::GridClientConfig::qanet();
+        let test = super::GridClientConfig::testnet();
+        let main = super::GridClientConfig::mainnet();
+
+        assert_eq!(qa.network, super::QA_NETWORK);
+        assert_eq!(qa.substrate_url, "wss://tfchain.qa.grid.tf/ws");
+        assert_eq!(qa.grid_proxy_url, "https://gridproxy.qa.grid.tf");
+        assert_eq!(qa.graphql_url, "https://graphql.qa.grid.tf/graphql");
+        assert_eq!(qa.relay_url, "wss://relay.qa.grid.tf");
+
+        assert_eq!(test.network, super::TEST_NETWORK);
+        assert_eq!(test.substrate_url, "wss://tfchain.test.grid.tf/ws");
+
+        assert_eq!(main.network, super::MAIN_NETWORK);
+        assert_eq!(main.substrate_url, "wss://tfchain.grid.tf/ws");
+        assert_eq!(main.grid_proxy_url, "https://gridproxy.grid.tf");
+        assert_eq!(main.graphql_url, "https://graphql.grid.tf/graphql");
+        assert_eq!(main.relay_url, "wss://relay.grid.tf");
+    }
+
+    #[test]
+    fn grid_client_config_from_network_accepts_aliases() {
+        let qa = super::GridClientConfig::from_network("qanet").expect("qa preset");
+        let test = super::GridClientConfig::from_network("TESTNET").expect("test preset");
+        let main = super::GridClientConfig::from_network(" main ").expect("main preset");
+
+        assert_eq!(qa.network, super::QA_NETWORK);
+        assert_eq!(test.network, super::TEST_NETWORK);
+        assert_eq!(main.network, super::MAIN_NETWORK);
+    }
+
+    #[test]
+    fn grid_client_config_from_network_rejects_unknown_presets() {
+        let err = super::GridClientConfig::from_network("staging").expect_err("unknown preset");
+        assert!(matches!(err, crate::GridError::Validation(_)));
+    }
+
+    #[test]
+    fn grid_client_config_builder_network_preserves_timeouts_and_normalizes_urls() {
+        let config = super::GridClientConfig::builder()
+            .http_timeout(std::time::Duration::from_secs(7))
+            .rmb_timeout(std::time::Duration::from_secs(9))
+            .network("mainnet")
+            .grid_proxy_urls(vec![
+                "https://proxy-a.example.test/".to_string(),
+                " https://proxy-b.example.test/ ".to_string(),
+            ])
+            .build();
+
+        assert_eq!(config.network, super::MAIN_NETWORK);
+        assert_eq!(config.http_timeout, std::time::Duration::from_secs(7));
+        assert_eq!(config.rmb_timeout, std::time::Duration::from_secs(9));
+        assert_eq!(config.grid_proxy_url, "https://proxy-a.example.test");
+        assert_eq!(
+            config.grid_proxy_urls,
+            vec![
+                "https://proxy-a.example.test".to_string(),
+                "https://proxy-b.example.test".to_string()
+            ]
+        );
     }
 
     fn proxy_node_with_public_ipv4(

@@ -13,11 +13,11 @@ pub mod zos;
 pub use calculator::Calculator;
 pub use error::GridError;
 pub use grid_client::{
-    DeploymentOutcome, ExistingNetworkSpec, FullNetworkSpec, FullNetworkSpecBuilder,
-    FullNetworkTarget, GridClient, GridClientConfig, GridClientConfigBuilder, NetworkLightSpec,
-    NetworkLightSpecBuilder, NetworkTarget, NodePlacement, NodeRequirements,
-    NodeRequirementsBuilder, VmDeployment, VmDeploymentBuilder, VmLightDeployment,
-    VmLightDeploymentBuilder, VmLightMount, VmLightSpec, VmLightSpecBuilder, VmSpec, VmSpecBuilder,
-    VolumeMountSpec,
+    DEV_NETWORK, DeploymentOutcome, ExistingNetworkSpec, FullNetworkSpec, FullNetworkSpecBuilder,
+    FullNetworkTarget, GridClient, GridClientConfig, GridClientConfigBuilder, MAIN_NETWORK,
+    NetworkLightSpec, NetworkLightSpecBuilder, NetworkTarget, NodePlacement, NodeRequirements,
+    NodeRequirementsBuilder, QA_NETWORK, TEST_NETWORK, VmDeployment, VmDeploymentBuilder,
+    VmLightDeployment, VmLightDeploymentBuilder, VmLightMount, VmLightSpec, VmLightSpecBuilder,
+    VmSpec, VmSpecBuilder, VolumeMountSpec,
 };
 pub use subi::{Contract, ContractType, PricingPolicy, SubstrateExt};
