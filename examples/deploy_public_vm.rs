@@ -1,10 +1,14 @@
 use std::{collections::HashMap, env, fs, path::PathBuf};
 
-use tfgrid_sdk_rust::{FullNetworkSpec, GridClient, NodeRequirements, VmDeployment, VmSpec};
+use tfgrid_sdk_rust::{
+    DEV_NETWORK, FullNetworkSpec, GridClient, GridClientConfig, NodeRequirements, VmDeployment,
+    VmSpec,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mnemonic = env::var("MNEMONIC").map_err(|_| "MNEMONIC is required")?;
+    let network = env::var("GRID_NETWORK").unwrap_or_else(|_| DEV_NETWORK.to_string());
     let ssh_key = load_ssh_key().ok();
 
     let mut env_vars = HashMap::new();
@@ -30,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .build();
 
-    let client = GridClient::devnet(&mnemonic).await?;
+    let client = GridClient::new(&mnemonic, GridClientConfig::from_network(&network)?).await?;
     let outcome = client.deploy_vm(request).await?;
     println!("{}", serde_json::to_string_pretty(&outcome)?);
     Ok(())

@@ -1,10 +1,11 @@
 use std::{env, fs, path::PathBuf};
 
-use tfgrid_sdk_rust::{GridClient, VmLightDeployment, VmLightSpec};
+use tfgrid_sdk_rust::{DEV_NETWORK, GridClient, GridClientConfig, VmLightDeployment, VmLightSpec};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mnemonic = env::var("MNEMONIC").map_err(|_| "MNEMONIC is required")?;
+    let network = env::var("GRID_NETWORK").unwrap_or_else(|_| DEV_NETWORK.to_string());
     let node_id: u32 = env::var("NODE_ID")
         .map_err(|_| "NODE_ID is required")?
         .parse()?;
@@ -14,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let network_name = env::var("NETWORK_NAME").map_err(|_| "NETWORK_NAME is required")?;
     let vm_ip = env::var("VM_IP").map_err(|_| "VM_IP is required")?;
     let ssh_key = load_ssh_key().ok();
-    let client = GridClient::devnet(&mnemonic).await?;
+    let client = GridClient::new(&mnemonic, GridClientConfig::from_network(&network)?).await?;
     let request = VmLightDeployment::builder()
         .fixed_node(node_id, node_twin_id)
         .existing_network(network_name, vm_ip)

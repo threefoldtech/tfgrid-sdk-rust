@@ -1,10 +1,11 @@
 use std::env;
 
-use tfgrid_sdk_rust::{DeploymentOutcome, GridClient};
+use tfgrid_sdk_rust::{DEV_NETWORK, DeploymentOutcome, GridClient, GridClientConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mnemonic = env::var("MNEMONIC").map_err(|_| "MNEMONIC is required")?;
+    let network = env::var("GRID_NETWORK").unwrap_or_else(|_| DEV_NETWORK.to_string());
     let node_twin_id: u32 = env::var("NODE_TWIN_ID")
         .map_err(|_| "NODE_TWIN_ID is required")?
         .parse()?;
@@ -15,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "NETWORK_CONTRACT_ID is required")?
         .parse()?;
 
-    let client = GridClient::devnet(&mnemonic).await?;
+    let client = GridClient::new(&mnemonic, GridClientConfig::from_network(&network)?).await?;
     let outcome = DeploymentOutcome {
         node_id: 0,
         node_twin_id,

@@ -68,16 +68,41 @@ let request = VmLightDeployment::builder()
     .build();
 ```
 
-Endpoint configuration is explicit and defaults to devnet:
+Named network presets are built in:
+
+```rust
+use tfgrid_sdk_rust::{GridClient, GridClientConfig};
+
+let dev = GridClientConfig::devnet();
+let qa = GridClientConfig::qanet();
+let test = GridClientConfig::testnet();
+let main = GridClientConfig::mainnet();
+
+let client = GridClient::qanet(&mnemonic).await?;
+```
+
+You can also resolve a preset dynamically:
+
+```rust
+use tfgrid_sdk_rust::{GridClient, GridClientConfig};
+
+let config = GridClientConfig::from_network("mainnet")?;
+
+let client = GridClient::new(&mnemonic, config).await?;
+```
+
+Or use the builder with a named preset and explicit overrides:
 
 ```rust
 use std::time::Duration;
-use tfgrid_sdk_rust::{GridClient, GridClientConfig};
+use tfgrid_sdk_rust::{GridClient, GridClientConfig, MAIN_NETWORK};
 
 let config = GridClientConfig::builder()
-    .substrate_url("wss://tfchain.dev.grid.tf/ws")
-    .grid_proxy_url("https://gridproxy.dev.grid.tf")
-    .relay_url("wss://relay.dev.grid.tf")
+    .network(MAIN_NETWORK)
+    .substrate_urls(vec![
+        "wss://tfchain.us.grid.tf/ws".to_string(),
+        "wss://tfchain.grid.tf/ws".to_string(),
+    ])
     .http_timeout(Duration::from_secs(30))
     .rmb_timeout(Duration::from_secs(30))
     .build();
@@ -119,13 +144,19 @@ Set your mnemonic in the environment first:
 export MNEMONIC='your devnet mnemonic here'
 ```
 
-Deploy a small VM on devnet:
+Select a preset network when you do not want the default devnet:
+
+```bash
+export GRID_NETWORK=mainnet
+```
+
+Deploy a small VM on the selected preset network:
 
 ```bash
 cargo run --example deploy_small_vm
 ```
 
-Deploy a configurable VM on devnet:
+Deploy a configurable VM on the selected preset network:
 
 ```bash
 cargo run --example deploy_custom_vm
@@ -182,6 +213,8 @@ cargo test
 
 ## Notes
 
-- `GridClient::devnet()` uses sane devnet defaults, and `GridClient::new()` lets you override substrate, gridproxy, relay, and timeout settings.
+- `GridClient::devnet()`, `GridClient::qanet()`, `GridClient::testnet()`, and `GridClient::mainnet()` use built-in endpoint presets.
+- `GridClientConfig::from_network(...)` accepts `dev`, `devnet`, `qa`, `qanet`, `test`, `testnet`, `main`, and `mainnet`.
+- `GridClient::new()` lets you override substrate, gridproxy, graphql, relay, KYC, sentry, and timeout settings on top of those presets.
 - The example code will try to load a public SSH key from `SSH_KEY_PATH` or common files under `~/.ssh/`.
 - Earlier broken live attempts can leave stray devnet contracts behind. Use the cancellation helpers or clean them up manually.
