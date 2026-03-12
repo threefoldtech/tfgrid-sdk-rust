@@ -12,4 +12,8 @@ pub mod zos;
 
 pub use calculator::Calculator;
 pub use error::GridError;
+pub use live::{
+    DeploymentOutcome, ExistingNetworkSpec, LiveClient, NetworkLightSpec, NetworkTarget,
+    NodePlacement, NodeRequirements, VmLightDeployment, VmLightMount, VmLightSpec,
+};
 pub use subi::{Contract, ContractType, PricingPolicy, SubstrateExt};

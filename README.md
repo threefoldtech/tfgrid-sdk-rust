@@ -20,6 +20,40 @@ The live client in [src/live.rs](/home/xmonader/wspace/geomind/sdk-grid-rust/src
 
 The successful Rust-only deployment path is exercised by [examples/deploy_small_vm.rs](/home/xmonader/wspace/geomind/sdk-grid-rust/examples/deploy_small_vm.rs).
 
+## Live API
+
+The live API is centered around these public types:
+
+- `LiveClient`
+- `VmLightDeployment`
+- `VmLightSpec`
+- `NetworkTarget`
+- `NetworkLightSpec`
+- `ExistingNetworkSpec`
+- `NodePlacement`
+- `NodeRequirements`
+
+`deploy_small_vm()` still exists as a convenience wrapper, but the configurable entry point is:
+
+```rust
+client.deploy_vm_light(request).await?;
+```
+
+With that request you can now control:
+
+- CPU
+- Memory
+- Root filesystem size
+- Flist
+- Entrypoint
+- Environment variables
+- Mounts
+- GPU list
+- CoreX toggle
+- Automatic placement requirements
+- Fixed node placement
+- New or existing `network-light` usage
+
 ## Examples
 
 Set your mnemonic in the environment first:
@@ -32,6 +66,12 @@ Deploy a small VM on devnet:
 
 ```bash
 cargo run --example deploy_small_vm
+```
+
+Deploy a configurable VM on devnet:
+
+```bash
+cargo run --example deploy_custom_vm
 ```
 
 Print the RMB token for debugging:

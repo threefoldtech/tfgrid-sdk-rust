@@ -80,6 +80,110 @@ pub struct DeploymentOutcome {
     pub console_url: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeRequirements {
+    pub min_cru: u64,
+    pub min_memory_bytes: u64,
+    pub min_rootfs_bytes: u64,
+}
+
+impl Default for NodeRequirements {
+    fn default() -> Self {
+        Self {
+            min_cru: 1,
+            min_memory_bytes: 1024 * zos::MEGABYTE,
+            min_rootfs_bytes: 10 * zos::GIGABYTE,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodePlacement {
+    Auto(NodeRequirements),
+    Fixed { node_id: u32, node_twin_id: u32 },
+}
+
+impl Default for NodePlacement {
+    fn default() -> Self {
+        Self::Auto(NodeRequirements::default())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkLightSpec {
+    pub name: Option<String>,
+    pub subnet: Option<String>,
+    pub mycelium_key: Option<Vec<u8>>,
+}
+
+impl Default for NetworkLightSpec {
+    fn default() -> Self {
+        Self {
+            name: None,
+            subnet: None,
+            mycelium_key: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExistingNetworkSpec {
+    pub name: String,
+    pub ip: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkTarget {
+    Create(NetworkLightSpec),
+    Existing(ExistingNetworkSpec),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmLightMount {
+    pub name: String,
+    pub mountpoint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmLightSpec {
+    pub name: Option<String>,
+    pub flist: String,
+    pub cpu: u8,
+    pub memory_bytes: u64,
+    pub rootfs_size_bytes: u64,
+    pub entrypoint: String,
+    pub env: HashMap<String, String>,
+    pub mounts: Vec<VmLightMount>,
+    pub corex: bool,
+    pub gpu: Vec<String>,
+    pub mycelium_seed: Option<Vec<u8>>,
+}
+
+impl Default for VmLightSpec {
+    fn default() -> Self {
+        Self {
+            name: None,
+            flist: "https://hub.grid.tf/tf-official-apps/base:latest.flist".to_string(),
+            cpu: 1,
+            memory_bytes: 1024 * zos::MEGABYTE,
+            rootfs_size_bytes: 10 * zos::GIGABYTE,
+            entrypoint: "/sbin/zinit init".to_string(),
+            env: HashMap::new(),
+            mounts: Vec::new(),
+            corex: false,
+            gpu: Vec::new(),
+            mycelium_seed: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmLightDeployment {
+    pub placement: NodePlacement,
+    pub network: NetworkTarget,
+    pub vm: VmLightSpec,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ProxyNode {
     #[serde(rename = "nodeId")]
@@ -95,11 +199,38 @@ struct ProxyNode {
     used_resources: ProxyCapacity,
 }
 
+impl ProxyNode {
+    fn fixed(node_id: u32, twin_id: u32) -> Self {
+        Self {
+            node_id,
+            twin_id,
+            status: "up".to_string(),
+            healthy: true,
+            features: vec!["network-light".to_string(), "zmachine-light".to_string()],
+            total_resources: ProxyCapacity {
+                cru: u64::MAX,
+                mru: u64::MAX,
+                sru: u64::MAX,
+            },
+            used_resources: ProxyCapacity {
+                cru: 0,
+                mru: 0,
+                sru: 0,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ProxyCapacity {
     cru: u64,
     mru: u64,
     sru: u64,
+}
+
+#[derive(Debug, Clone)]
+struct DerivedNames {
+    vm_name: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -369,8 +500,36 @@ impl LiveClient {
         &self,
         ssh_key: Option<&str>,
     ) -> Result<DeploymentOutcome, GridError> {
-        let node = self.pick_node().await?;
-        self.deploy_small_vm_on_node(node, ssh_key).await
+        let mut vm = VmLightSpec::default();
+        if let Some(key) = ssh_key.filter(|value| !value.trim().is_empty()) {
+            vm.env.insert("SSH_KEY".to_string(), key.trim().to_string());
+        }
+        self.deploy_vm_light(VmLightDeployment {
+            placement: NodePlacement::default(),
+            network: NetworkTarget::Create(NetworkLightSpec::default()),
+            vm,
+        })
+        .await
+    }
+
+    pub async fn deploy_vm_light(
+        &self,
+        request: VmLightDeployment,
+    ) -> Result<DeploymentOutcome, GridError> {
+        validate_vm_light_request(&request)?;
+        match &request.placement {
+            NodePlacement::Auto(requirements) => {
+                let node = self.pick_node(requirements).await?;
+                self.deploy_vm_light_on_node(node, request).await
+            }
+            NodePlacement::Fixed {
+                node_id,
+                node_twin_id,
+            } => {
+                let node = ProxyNode::fixed(*node_id, *node_twin_id);
+                self.deploy_vm_light_on_node(node, request).await
+            }
+        }
     }
 
     pub async fn deploy_vm_on_existing_network(
@@ -381,88 +540,22 @@ impl LiveClient {
         vm_ip: &str,
         ssh_key: Option<&str>,
     ) -> Result<DeploymentOutcome, GridError> {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|err| GridError::backend(err.to_string()))?
-            .as_secs();
-        let vm_name = format!("rust_vm_light_{suffix}");
-
-        let mut env_vars = HashMap::new();
+        let mut vm = VmLightSpec::default();
         if let Some(key) = ssh_key.filter(|value| !value.trim().is_empty()) {
-            env_vars.insert("SSH_KEY".to_string(), key.trim().to_string());
+            vm.env.insert("SSH_KEY".to_string(), key.trim().to_string());
         }
-        let vm = build_vm_light(
-            &vm_name,
-            network_name,
-            vm_ip,
-            env_vars,
-            random_bytes(zos::MYCELIUM_IP_SEED_LEN),
-        );
-        let vm_metadata = deployment_metadata(&vm_name, "vm-light", &vm_name);
-        let mut vm_deployment = DeployDeployment::new(self.identity.twin_id, vm_metadata, vec![vm]);
-        sign_deployment(&mut vm_deployment, self.identity.twin_id, &self.signer)?;
-        let vm_hash = deployment_hash_hex(&vm_deployment)?;
-
-        submit_create_node_contract(
-            &self.chain,
-            &self.signer,
-            node_id,
-            &vm_deployment.metadata,
-            &vm_hash,
-        )
-        .await
-        .map_err(|err| GridError::backend(format!("create vm contract: {err}")))?;
-        let vm_contract_id = self.wait_for_contract(node_id, &vm_hash).await?;
-        vm_deployment.contract_id = vm_contract_id;
-        self.deploy_and_confirm(node_twin_id, &vm_deployment)
-            .await
-            .map_err(|err| GridError::backend(format!("deploy vm over RMB: {err}")))?;
-        let vm_changes = self
-            .wait_for_workloads(node_twin_id, vm_contract_id)
-            .await
-            .map_err(|err| GridError::backend(format!("wait vm workloads: {err}")))?;
-        let vm_state = self
-            .rmb_call::<_, serde_json::Value>(
+        self.deploy_vm_light(VmLightDeployment {
+            placement: NodePlacement::Fixed {
+                node_id,
                 node_twin_id,
-                "zos.deployment.get",
-                &json!({ "contract_id": vm_contract_id }),
-                None,
-            )
-            .await
-            .map_err(|err| GridError::backend(format!("load vm deployment from node: {err}")))?;
-        let vm_workload = extract_workloads(vm_state)?
-            .into_iter()
-            .find(|workload| workload.name == vm_name)
-            .ok_or_else(|| GridError::NotFound(format!("vm workload {vm_name}")))?;
-        let result: serde_json::Value = vm_workload.result.data;
-        let mycelium_ip = result
-            .get("mycelium_ip")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let console_url = result
-            .get("console_url")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        if vm_changes
-            .iter()
-            .any(|workload| workload.result.state == zos::STATE_ERROR)
-        {
-            return Err(GridError::backend("vm deployment entered error state"));
-        }
-
-        Ok(DeploymentOutcome {
-            node_id,
-            node_twin_id,
-            network_name: network_name.to_string(),
-            network_contract_id: 0,
-            vm_name,
-            vm_contract_id,
-            vm_ip: vm_ip.to_string(),
-            mycelium_ip,
-            console_url,
+            },
+            network: NetworkTarget::Existing(ExistingNetworkSpec {
+                name: network_name.to_string(),
+                ip: vm_ip.to_string(),
+            }),
+            vm,
         })
+        .await
     }
 
     pub fn debug_rmb_token(&self) -> Result<String, GridError> {
@@ -473,10 +566,10 @@ impl LiveClient {
         self.identity.twin_id
     }
 
-    async fn deploy_small_vm_on_node(
+    async fn deploy_vm_light_on_node(
         &self,
         node: ProxyNode,
-        ssh_key: Option<&str>,
+        request: VmLightDeployment,
     ) -> Result<DeploymentOutcome, GridError> {
         trace_step(format!(
             "selected node {} twin {}",
@@ -486,56 +579,66 @@ impl LiveClient {
             .duration_since(UNIX_EPOCH)
             .map_err(|err| GridError::backend(err.to_string()))?
             .as_secs();
-        let second_octet = 10 + (suffix % 180) as u8;
-        let network_name = format!("rust_net_light_{suffix}");
-        let vm_name = format!("rust_vm_light_{suffix}");
-        let subnet = format!("10.{second_octet}.2.0/24");
-        let vm_ip = format!("10.{second_octet}.2.5");
-        let network =
-            build_network_light(&network_name, &subnet, random_bytes(zos::MYCELIUM_KEY_LEN));
-        let network_metadata = deployment_metadata(&network_name, "network-light", "Network");
-        let mut network_deployment =
-            DeployDeployment::new(self.identity.twin_id, network_metadata, vec![network]);
-        sign_deployment(&mut network_deployment, self.identity.twin_id, &self.signer)?;
-        let network_hash = deployment_hash_hex(&network_deployment)?;
-        debug_dump("network", &network_deployment, &network_hash);
+        let deployment_names = derived_names(&request, suffix);
+        let (network_name, vm_ip, network_contract_id) = match &request.network {
+            NetworkTarget::Create(network_spec) => {
+                let network_name = network_spec
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("rust_net_light_{suffix}"));
+                let subnet = network_spec
+                    .subnet
+                    .clone()
+                    .unwrap_or_else(|| format!("10.{}.2.0/24", 10 + (suffix % 180) as u8));
+                let vm_ip = vm_ip_from_subnet(&subnet)?;
+                let network = build_network_light(
+                    &network_name,
+                    &subnet,
+                    network_spec
+                        .mycelium_key
+                        .clone()
+                        .unwrap_or_else(|| random_bytes(zos::MYCELIUM_KEY_LEN)),
+                );
+                let network_metadata =
+                    deployment_metadata(&network_name, "network-light", "Network");
+                let mut network_deployment =
+                    DeployDeployment::new(self.identity.twin_id, network_metadata, vec![network]);
+                sign_deployment(&mut network_deployment, self.identity.twin_id, &self.signer)?;
+                let network_hash = deployment_hash_hex(&network_deployment)?;
+                debug_dump("network", &network_deployment, &network_hash);
 
-        submit_create_node_contract(
-            &self.chain,
-            &self.signer,
-            node.node_id,
-            &network_deployment.metadata,
-            &network_hash,
-        )
-        .await
-        .map_err(|err| GridError::backend(format!("create network contract: {err}")))?;
-        let network_contract_id = self.wait_for_contract(node.node_id, &network_hash).await?;
-        trace_step(format!("network contract id {network_contract_id}"));
-        network_deployment.contract_id = network_contract_id;
-        self.deploy_and_confirm(node.twin_id, &network_deployment)
-            .await
-            .map_err(|err| GridError::backend(format!("deploy network over RMB: {err}")))?;
-        trace_step(format!(
-            "network deployment visible on node {network_contract_id}"
-        ));
-        self.wait_for_workloads(node.twin_id, network_contract_id)
-            .await
-            .map_err(|err| GridError::backend(format!("wait network workloads: {err}")))?;
-        trace_step(format!(
-            "network workloads settled for contract {network_contract_id}"
-        ));
+                submit_create_node_contract(
+                    &self.chain,
+                    &self.signer,
+                    node.node_id,
+                    &network_deployment.metadata,
+                    &network_hash,
+                )
+                .await
+                .map_err(|err| GridError::backend(format!("create network contract: {err}")))?;
+                let network_contract_id =
+                    self.wait_for_contract(node.node_id, &network_hash).await?;
+                trace_step(format!("network contract id {network_contract_id}"));
+                network_deployment.contract_id = network_contract_id;
+                self.deploy_and_confirm(node.twin_id, &network_deployment)
+                    .await
+                    .map_err(|err| GridError::backend(format!("deploy network over RMB: {err}")))?;
+                trace_step(format!(
+                    "network deployment visible on node {network_contract_id}"
+                ));
+                self.wait_for_workloads(node.twin_id, network_contract_id)
+                    .await
+                    .map_err(|err| GridError::backend(format!("wait network workloads: {err}")))?;
+                trace_step(format!(
+                    "network workloads settled for contract {network_contract_id}"
+                ));
+                (network_name, vm_ip, network_contract_id)
+            }
+            NetworkTarget::Existing(existing) => (existing.name.clone(), existing.ip.clone(), 0),
+        };
 
-        let mut env_vars = HashMap::new();
-        if let Some(key) = ssh_key.filter(|value| !value.trim().is_empty()) {
-            env_vars.insert("SSH_KEY".to_string(), key.trim().to_string());
-        }
-        let vm = build_vm_light(
-            &vm_name,
-            &network_name,
-            &vm_ip,
-            env_vars,
-            random_bytes(zos::MYCELIUM_IP_SEED_LEN),
-        );
+        let vm_name = deployment_names.vm_name;
+        let vm = build_vm_light(&vm_name, &network_name, &vm_ip, &request.vm);
         let vm_metadata = deployment_metadata(&vm_name, "vm-light", &vm_name);
         let mut vm_deployment = DeployDeployment::new(self.identity.twin_id, vm_metadata, vec![vm]);
         sign_deployment(&mut vm_deployment, self.identity.twin_id, &self.signer)?;
@@ -609,7 +712,7 @@ impl LiveClient {
         })
     }
 
-    async fn pick_node(&self) -> Result<ProxyNode, GridError> {
+    async fn pick_node(&self, requirements: &NodeRequirements) -> Result<ProxyNode, GridError> {
         let response = self
             .http
             .get(format!("{}/nodes", self.grid_proxy_url))
@@ -625,13 +728,13 @@ impl LiveClient {
                     && node.healthy
                     && has_feature(node, "network-light")
                     && has_feature(node, "zmachine-light")
-                    && free_mru(node) >= 1024 * zos::MEGABYTE
-                    && free_sru(node) >= 10 * zos::GIGABYTE
+                    && free_mru(node) >= requirements.min_memory_bytes
+                    && free_sru(node) >= requirements.min_rootfs_bytes
                     && node
                         .total_resources
                         .cru
                         .saturating_sub(node.used_resources.cru)
-                        >= 1
+                        >= requirements.min_cru
             })
             .ok_or_else(|| {
                 GridError::NotFound(
@@ -1160,6 +1263,86 @@ fn normalize_workload(workload: serde_json::Value) -> serde_json::Value {
     workload
 }
 
+fn validate_vm_light_request(request: &VmLightDeployment) -> Result<(), GridError> {
+    if request.vm.cpu == 0 {
+        return Err(GridError::validation("vm cpu must be greater than zero"));
+    }
+    if request.vm.memory_bytes == 0 {
+        return Err(GridError::validation(
+            "vm memory_bytes must be greater than zero",
+        ));
+    }
+    if request.vm.rootfs_size_bytes == 0 {
+        return Err(GridError::validation(
+            "vm rootfs_size_bytes must be greater than zero",
+        ));
+    }
+    if request.vm.flist.trim().is_empty() {
+        return Err(GridError::validation("vm flist must not be empty"));
+    }
+    if request.vm.entrypoint.trim().is_empty() {
+        return Err(GridError::validation("vm entrypoint must not be empty"));
+    }
+    match &request.network {
+        NetworkTarget::Create(network) => {
+            if let Some(name) = &network.name {
+                if name.trim().is_empty() {
+                    return Err(GridError::validation("network name must not be empty"));
+                }
+            }
+            if let Some(subnet) = &network.subnet {
+                vm_ip_from_subnet(subnet)?;
+            }
+        }
+        NetworkTarget::Existing(existing) => {
+            if existing.name.trim().is_empty() {
+                return Err(GridError::validation(
+                    "existing network name must not be empty",
+                ));
+            }
+            if existing.ip.trim().is_empty() {
+                return Err(GridError::validation(
+                    "existing network ip must not be empty",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn derived_names(request: &VmLightDeployment, suffix: u64) -> DerivedNames {
+    let vm_name = request
+        .vm
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("rust_vm_light_{suffix}"));
+    DerivedNames { vm_name }
+}
+
+fn vm_ip_from_subnet(subnet: &str) -> Result<String, GridError> {
+    let base = subnet
+        .split_once('/')
+        .map(|(ip, _)| ip)
+        .ok_or_else(|| GridError::validation(format!("invalid subnet: {subnet}")))?;
+    let mut octets = base.split('.');
+    let first = octets
+        .next()
+        .ok_or_else(|| GridError::validation(format!("invalid subnet: {subnet}")))?;
+    let second = octets
+        .next()
+        .ok_or_else(|| GridError::validation(format!("invalid subnet: {subnet}")))?;
+    let third = octets
+        .next()
+        .ok_or_else(|| GridError::validation(format!("invalid subnet: {subnet}")))?;
+    let _fourth = octets
+        .next()
+        .ok_or_else(|| GridError::validation(format!("invalid subnet: {subnet}")))?;
+    if octets.next().is_some() {
+        return Err(GridError::validation(format!("invalid subnet: {subnet}")));
+    }
+    Ok(format!("{first}.{second}.{third}.5"))
+}
+
 impl DeployDeployment {
     fn new(twin_id: u32, metadata: String, workloads: Vec<DeployWorkload>) -> Self {
         Self {
@@ -1207,35 +1390,39 @@ fn build_network_light(name: &str, subnet: &str, mycelium_key: Vec<u8>) -> Deplo
     }
 }
 
-fn build_vm_light(
-    name: &str,
-    network_name: &str,
-    ip: &str,
-    env: HashMap<String, String>,
-    mycelium_seed: Vec<u8>,
-) -> DeployWorkload {
+fn build_vm_light(name: &str, network_name: &str, ip: &str, spec: &VmLightSpec) -> DeployWorkload {
     let data = ZMachineLightData {
-        flist: "https://hub.grid.tf/tf-official-apps/base:latest.flist".to_string(),
+        flist: spec.flist.clone(),
         network: MachineNetworkLightData {
             mycelium: Some(MyceliumIpData {
                 network: network_name.to_string(),
-                seed: mycelium_seed,
+                seed: spec
+                    .mycelium_seed
+                    .clone()
+                    .unwrap_or_else(|| random_bytes(zos::MYCELIUM_IP_SEED_LEN)),
             }),
             interfaces: vec![MachineInterfaceData {
                 network: network_name.to_string(),
                 ip: ip.to_string(),
             }],
         },
-        size: 10 * zos::GIGABYTE,
+        size: spec.rootfs_size_bytes,
         compute_capacity: MachineCapacityData {
-            cpu: 1,
-            memory: 1024 * zos::MEGABYTE,
+            cpu: spec.cpu,
+            memory: spec.memory_bytes,
         },
-        mounts: Vec::new(),
-        entrypoint: "/sbin/zinit init".to_string(),
-        env,
-        corex: false,
-        gpu: Vec::new(),
+        mounts: spec
+            .mounts
+            .iter()
+            .map(|mount| MachineMountData {
+                name: mount.name.clone(),
+                mountpoint: mount.mountpoint.clone(),
+            })
+            .collect(),
+        entrypoint: spec.entrypoint.clone(),
+        env: spec.env.clone(),
+        corex: spec.corex,
+        gpu: spec.gpu.clone(),
     };
     DeployWorkload {
         version: 0,
@@ -1707,6 +1894,27 @@ mod tests {
         assert_eq!(workloads.len(), 2);
         assert_eq!(workloads[0].result.state, zos::STATE_INIT);
         assert_eq!(workloads[1].result.state, zos::STATE_OK);
+    }
+
+    #[test]
+    fn validate_vm_light_request_rejects_zero_cpu() {
+        let request = super::VmLightDeployment {
+            placement: super::NodePlacement::default(),
+            network: super::NetworkTarget::Create(super::NetworkLightSpec::default()),
+            vm: super::VmLightSpec {
+                cpu: 0,
+                ..Default::default()
+            },
+        };
+
+        let err = super::validate_vm_light_request(&request).expect_err("zero cpu must fail");
+        assert!(matches!(err, crate::GridError::Validation(_)));
+    }
+
+    #[test]
+    fn vm_ip_from_subnet_uses_host_five() {
+        let ip = super::vm_ip_from_subnet("10.24.2.0/24").expect("vm ip");
+        assert_eq!(ip, "10.24.2.5");
     }
 }
 
