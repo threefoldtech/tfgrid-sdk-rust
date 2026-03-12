@@ -9,7 +9,7 @@ The crate currently has two layers:
 
 ## Current `GridClient` Scope
 
-The client implementation in [src/live.rs](/home/xmonader/wspace/geomind/sdk-grid-rust/src/live.rs) supports:
+The client implementation in [mod.rs](/home/xmonader/wspace/geomind/sdk-grid-rust/src/grid_client/mod.rs) supports:
 
 - Devnet twin relay setup
 - Node contract creation on TFChain

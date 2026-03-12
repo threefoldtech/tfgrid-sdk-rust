@@ -75,8 +75,6 @@ pub struct GridClient {
     rmb_timeout: Duration,
 }
 
-pub type LiveClient = GridClient;
-
 #[derive(Debug, Clone)]
 pub struct GridClientConfig {
     pub substrate_url: String,
