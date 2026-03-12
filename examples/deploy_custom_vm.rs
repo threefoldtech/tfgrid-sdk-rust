@@ -1,8 +1,7 @@
 use std::{collections::HashMap, env, fs, path::PathBuf};
 
 use tfgrid_sdk_rust::{
-    LiveClient, NetworkLightSpec, NetworkTarget, NodePlacement, NodeRequirements,
-    VmLightDeployment, VmLightSpec,
+    LiveClient, NetworkLightSpec, NodeRequirements, VmLightDeployment, VmLightSpec,
 };
 
 #[tokio::main]
@@ -15,34 +14,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         env_vars.insert("SSH_KEY".to_string(), key.trim().to_string());
     }
 
-    let request = VmLightDeployment {
-        placement: NodePlacement::Auto(NodeRequirements {
-            min_cru: 2,
-            min_memory_bytes: 2 * 1024 * 1024 * 1024,
-            min_rootfs_bytes: 20 * 1024 * 1024 * 1024,
-        }),
-        network: NetworkTarget::Create(NetworkLightSpec::default()),
-        vm: VmLightSpec {
-            name: env::var("VM_NAME").ok(),
-            flist: env::var("FLIST").unwrap_or_else(|_| {
-                "https://hub.grid.tf/tf-official-apps/base:latest.flist".to_string()
-            }),
-            cpu: env::var("CPU")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(2),
-            memory_bytes: env::var("MEMORY_BYTES")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(2 * 1024 * 1024 * 1024),
-            rootfs_size_bytes: env::var("ROOTFS_BYTES")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(20 * 1024 * 1024 * 1024),
-            env: env_vars,
-            ..Default::default()
-        },
-    };
+    let request = VmLightDeployment::builder()
+        .auto_with(
+            NodeRequirements::builder()
+                .min_cru(2)
+                .min_memory_bytes(2 * 1024 * 1024 * 1024)
+                .min_rootfs_bytes(20 * 1024 * 1024 * 1024)
+                .build(),
+        )
+        .create_network(NetworkLightSpec::builder().build())
+        .vm({
+            let mut vm = VmLightSpec::builder()
+                .cpu(
+                    env::var("CPU")
+                        .ok()
+                        .and_then(|value| value.parse().ok())
+                        .unwrap_or(2),
+                )
+                .memory_bytes(
+                    env::var("MEMORY_BYTES")
+                        .ok()
+                        .and_then(|value| value.parse().ok())
+                        .unwrap_or(2 * 1024 * 1024 * 1024),
+                )
+                .rootfs_size_bytes(
+                    env::var("ROOTFS_BYTES")
+                        .ok()
+                        .and_then(|value| value.parse().ok())
+                        .unwrap_or(20 * 1024 * 1024 * 1024),
+                )
+                .flist(env::var("FLIST").unwrap_or_else(|_| {
+                    "https://hub.grid.tf/tf-official-apps/base:latest.flist".to_string()
+                }));
+            if let Ok(name) = env::var("VM_NAME") {
+                vm = vm.name(name);
+            }
+            for (key, value) in env_vars {
+                vm = vm.env(key, value);
+            }
+            vm.build()
+        })
+        .build();
 
     let client = LiveClient::devnet(&mnemonic).await?;
     let outcome = client.deploy_vm_light(request).await?;

@@ -44,6 +44,29 @@ The live API is centered around these public types:
 client.deploy_vm_light(request).await?;
 ```
 
+Typical builder-style usage:
+
+```rust
+let request = VmLightDeployment::builder()
+    .auto_with(
+        NodeRequirements::builder()
+            .min_cru(2)
+            .min_memory_bytes(2 * 1024 * 1024 * 1024)
+            .min_rootfs_bytes(20 * 1024 * 1024 * 1024)
+            .build(),
+    )
+    .create_network(NetworkLightSpec::builder().name("demo-net").build())
+    .vm(
+        VmLightSpec::builder()
+            .name("demo-vm")
+            .cpu(2)
+            .memory_bytes(2 * 1024 * 1024 * 1024)
+            .env("SSH_KEY", "ssh-ed25519 ...")
+            .build(),
+    )
+    .build();
+```
+
 With that request you can now control:
 
 - CPU

@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-use tfgrid_sdk_rust::live::LiveClient;
+use tfgrid_sdk_rust::{LiveClient, VmLightDeployment, VmLightSpec};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,15 +15,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vm_ip = env::var("VM_IP").map_err(|_| "VM_IP is required")?;
     let ssh_key = load_ssh_key().ok();
     let client = LiveClient::devnet(&mnemonic).await?;
-    let outcome = client
-        .deploy_vm_on_existing_network(
-            node_id,
-            node_twin_id,
-            &network_name,
-            &vm_ip,
-            ssh_key.as_deref(),
-        )
-        .await?;
+    let request = VmLightDeployment::builder()
+        .fixed_node(node_id, node_twin_id)
+        .existing_network(network_name, vm_ip)
+        .vm({
+            let mut vm = VmLightSpec::builder();
+            if let Some(key) = ssh_key.as_deref().filter(|value| !value.trim().is_empty()) {
+                vm = vm.env("SSH_KEY", key.trim());
+            }
+            vm.build()
+        })
+        .build();
+    let outcome = client.deploy_vm_light(request).await?;
     println!("{}", serde_json::to_string_pretty(&outcome)?);
     Ok(())
 }

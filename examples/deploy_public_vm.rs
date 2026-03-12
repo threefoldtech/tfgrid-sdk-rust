@@ -1,9 +1,6 @@
 use std::{collections::HashMap, env, fs, path::PathBuf};
 
-use tfgrid_sdk_rust::{
-    FullNetworkSpec, FullNetworkTarget, LiveClient, NodePlacement, NodeRequirements, VmDeployment,
-    VmSpec,
-};
+use tfgrid_sdk_rust::{FullNetworkSpec, LiveClient, NodeRequirements, VmDeployment, VmSpec};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -16,16 +13,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let request = VmDeployment::builder()
-        .placement(NodePlacement::Auto(NodeRequirements {
-            min_cru: 1,
-            min_memory_bytes: 1024 * 1024 * 1024,
-            min_rootfs_bytes: 10 * 1024 * 1024 * 1024,
-        }))
-        .network(FullNetworkTarget::Create(FullNetworkSpec::default()))
-        .vm(VmSpec {
-            env: env_vars,
-            public_ipv4: true,
-            ..Default::default()
+        .auto_with(
+            NodeRequirements::builder()
+                .min_cru(1)
+                .min_memory_bytes(1024 * 1024 * 1024)
+                .min_rootfs_bytes(10 * 1024 * 1024 * 1024)
+                .build(),
+        )
+        .create_network(FullNetworkSpec::builder().build())
+        .vm({
+            let mut vm = VmSpec::builder().public_ipv4(true);
+            for (key, value) in env_vars {
+                vm = vm.env(key, value);
+            }
+            vm.build()
         })
         .build();
 
