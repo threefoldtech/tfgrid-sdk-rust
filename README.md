@@ -27,11 +27,16 @@ The live API is centered around these public types:
 - `LiveClient`
 - `VmLightDeployment`
 - `VmLightSpec`
+- `VmDeployment`
+- `VmSpec`
 - `NetworkTarget`
 - `NetworkLightSpec`
+- `FullNetworkTarget`
+- `FullNetworkSpec`
 - `ExistingNetworkSpec`
 - `NodePlacement`
 - `NodeRequirements`
+- `VolumeMountSpec`
 
 `deploy_small_vm()` still exists as a convenience wrapper, but the configurable entry point is:
 
@@ -54,6 +59,17 @@ With that request you can now control:
 - Fixed node placement
 - New or existing `network-light` usage
 
+For full `zmachine` deployments, use:
+
+```rust
+client.deploy_vm(request).await?;
+```
+
+Lifecycle helpers:
+
+- `cancel_contract(contract_id)`
+- `cancel_deployment_outcome(&outcome)`
+
 ## Examples
 
 Set your mnemonic in the environment first:
@@ -72,6 +88,27 @@ Deploy a configurable VM on devnet:
 
 ```bash
 cargo run --example deploy_custom_vm
+```
+
+Deploy a `vm-light` with an attached volume:
+
+```bash
+cargo run --example deploy_vm_with_volume
+```
+
+Deploy a full `zmachine` with public IPv4:
+
+```bash
+cargo run --example deploy_public_vm
+```
+
+Cancel a live deployment outcome:
+
+```bash
+export NODE_TWIN_ID=<node twin id>
+export VM_CONTRACT_ID=<vm contract id>
+export NETWORK_CONTRACT_ID=<network contract id>
+cargo run --example cancel_deployment
 ```
 
 Print the RMB token for debugging:
@@ -106,4 +143,4 @@ cargo test
 
 - The live client is intentionally devnet-focused today.
 - The example code will try to load a public SSH key from `SSH_KEY_PATH` or common files under `~/.ssh/`.
-- Earlier broken live attempts can leave stray devnet contracts behind. Clean those up manually or through a future cancellation helper.
+- Earlier broken live attempts can leave stray devnet contracts behind. Use the cancellation helpers or clean them up manually.
