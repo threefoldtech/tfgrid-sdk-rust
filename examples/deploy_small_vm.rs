@@ -5,25 +5,9 @@ use tfgrid_sdk_rust::live::LiveClient;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mnemonic = env::var("MNEMONIC").map_err(|_| "MNEMONIC is required")?;
-    let node_id: u32 = env::var("NODE_ID")
-        .map_err(|_| "NODE_ID is required")?
-        .parse()?;
-    let node_twin_id: u32 = env::var("NODE_TWIN_ID")
-        .map_err(|_| "NODE_TWIN_ID is required")?
-        .parse()?;
-    let network_name = env::var("NETWORK_NAME").map_err(|_| "NETWORK_NAME is required")?;
-    let vm_ip = env::var("VM_IP").map_err(|_| "VM_IP is required")?;
     let ssh_key = load_ssh_key().ok();
     let client = LiveClient::devnet(&mnemonic).await?;
-    let outcome = client
-        .deploy_vm_on_existing_network(
-            node_id,
-            node_twin_id,
-            &network_name,
-            &vm_ip,
-            ssh_key.as_deref(),
-        )
-        .await?;
+    let outcome = client.deploy_small_vm(ssh_key.as_deref()).await?;
     println!("{}", serde_json::to_string_pretty(&outcome)?);
     Ok(())
 }
