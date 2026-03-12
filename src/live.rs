@@ -77,6 +77,8 @@ pub struct DeploymentOutcome {
     pub vm_contract_id: u64,
     pub vm_ip: String,
     pub mycelium_ip: String,
+    pub public_ipv4: String,
+    pub public_ipv6: String,
     pub console_url: String,
 }
 
@@ -154,6 +156,7 @@ pub struct VmLightSpec {
     pub entrypoint: String,
     pub env: HashMap<String, String>,
     pub mounts: Vec<VmLightMount>,
+    pub volumes: Vec<VolumeMountSpec>,
     pub corex: bool,
     pub gpu: Vec<String>,
     pub mycelium_seed: Option<Vec<u8>>,
@@ -170,6 +173,7 @@ impl Default for VmLightSpec {
             entrypoint: "/sbin/zinit init".to_string(),
             env: HashMap::new(),
             mounts: Vec::new(),
+            volumes: Vec::new(),
             corex: false,
             gpu: Vec::new(),
             mycelium_seed: None,
@@ -184,6 +188,165 @@ pub struct VmLightDeployment {
     pub vm: VmLightSpec,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FullNetworkSpec {
+    pub name: Option<String>,
+    pub ip_range: Option<String>,
+    pub subnet: Option<String>,
+    pub mycelium_key: Option<Vec<u8>>,
+    pub wireguard_private_key: Option<String>,
+    pub wireguard_listen_port: Option<u16>,
+}
+
+impl Default for FullNetworkSpec {
+    fn default() -> Self {
+        Self {
+            name: None,
+            ip_range: None,
+            subnet: None,
+            mycelium_key: None,
+            wireguard_private_key: None,
+            wireguard_listen_port: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FullNetworkTarget {
+    Create(FullNetworkSpec),
+    Existing(ExistingNetworkSpec),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VolumeMountSpec {
+    pub name: String,
+    pub size_bytes: u64,
+    pub mountpoint: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmSpec {
+    pub name: Option<String>,
+    pub flist: String,
+    pub cpu: u8,
+    pub memory_bytes: u64,
+    pub rootfs_size_bytes: u64,
+    pub entrypoint: String,
+    pub env: HashMap<String, String>,
+    pub volumes: Vec<VolumeMountSpec>,
+    pub planetary: bool,
+    pub public_ipv4: bool,
+    pub public_ipv6: bool,
+    pub corex: bool,
+    pub gpu: Vec<String>,
+    pub mycelium_seed: Option<Vec<u8>>,
+}
+
+impl Default for VmSpec {
+    fn default() -> Self {
+        Self {
+            name: None,
+            flist: "https://hub.grid.tf/tf-official-apps/base:latest.flist".to_string(),
+            cpu: 1,
+            memory_bytes: 1024 * zos::MEGABYTE,
+            rootfs_size_bytes: 10 * zos::GIGABYTE,
+            entrypoint: "/sbin/zinit init".to_string(),
+            env: HashMap::new(),
+            volumes: Vec::new(),
+            planetary: false,
+            public_ipv4: false,
+            public_ipv6: false,
+            corex: false,
+            gpu: Vec::new(),
+            mycelium_seed: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmDeployment {
+    pub placement: NodePlacement,
+    pub network: FullNetworkTarget,
+    pub vm: VmSpec,
+}
+
+#[derive(Debug, Clone)]
+pub struct VmLightDeploymentBuilder {
+    request: VmLightDeployment,
+}
+
+#[derive(Debug, Clone)]
+pub struct VmDeploymentBuilder {
+    request: VmDeployment,
+}
+
+impl VmLightDeployment {
+    pub fn builder() -> VmLightDeploymentBuilder {
+        VmLightDeploymentBuilder {
+            request: Self {
+                placement: NodePlacement::default(),
+                network: NetworkTarget::Create(NetworkLightSpec::default()),
+                vm: VmLightSpec::default(),
+            },
+        }
+    }
+}
+
+impl VmLightDeploymentBuilder {
+    pub fn placement(mut self, placement: NodePlacement) -> Self {
+        self.request.placement = placement;
+        self
+    }
+
+    pub fn network(mut self, network: NetworkTarget) -> Self {
+        self.request.network = network;
+        self
+    }
+
+    pub fn vm(mut self, vm: VmLightSpec) -> Self {
+        self.request.vm = vm;
+        self
+    }
+
+    pub fn build(self) -> VmLightDeployment {
+        self.request
+    }
+}
+
+impl VmDeployment {
+    pub fn builder() -> VmDeploymentBuilder {
+        VmDeploymentBuilder {
+            request: Self {
+                placement: NodePlacement::default(),
+                network: FullNetworkTarget::Create(FullNetworkSpec::default()),
+                vm: VmSpec::default(),
+            },
+        }
+    }
+}
+
+impl VmDeploymentBuilder {
+    pub fn placement(mut self, placement: NodePlacement) -> Self {
+        self.request.placement = placement;
+        self
+    }
+
+    pub fn network(mut self, network: FullNetworkTarget) -> Self {
+        self.request.network = network;
+        self
+    }
+
+    pub fn vm(mut self, vm: VmSpec) -> Self {
+        self.request.vm = vm;
+        self
+    }
+
+    pub fn build(self) -> VmDeployment {
+        self.request
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ProxyNode {
     #[serde(rename = "nodeId")]
@@ -193,6 +356,10 @@ struct ProxyNode {
     status: String,
     healthy: bool,
     features: Vec<String>,
+    #[serde(rename = "farm_free_ips", default)]
+    farm_free_ips: u64,
+    #[serde(rename = "publicConfig", default)]
+    public_config: ProxyPublicConfig,
     #[serde(rename = "total_resources")]
     total_resources: ProxyCapacity,
     #[serde(rename = "used_resources")]
@@ -207,6 +374,8 @@ impl ProxyNode {
             status: "up".to_string(),
             healthy: true,
             features: vec!["network-light".to_string(), "zmachine-light".to_string()],
+            farm_free_ips: 0,
+            public_config: ProxyPublicConfig::default(),
             total_resources: ProxyCapacity {
                 cru: u64::MAX,
                 mru: u64::MAX,
@@ -219,6 +388,20 @@ impl ProxyNode {
             },
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct ProxyPublicConfig {
+    #[serde(default)]
+    domain: String,
+    #[serde(default)]
+    gw4: String,
+    #[serde(default)]
+    gw6: String,
+    #[serde(default)]
+    ipv4: String,
+    #[serde(default)]
+    ipv6: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -345,6 +528,47 @@ struct MachineMountData {
 struct ZMachineLightData {
     flist: String,
     network: MachineNetworkLightData,
+    size: u64,
+    compute_capacity: MachineCapacityData,
+    #[serde(default)]
+    mounts: Vec<MachineMountData>,
+    entrypoint: String,
+    #[serde(default)]
+    env: HashMap<String, String>,
+    #[serde(default)]
+    corex: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    gpu: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FullNetworkData {
+    #[serde(rename = "ip_range")]
+    ip_range: String,
+    subnet: String,
+    #[serde(rename = "wireguard_private_key")]
+    wireguard_private_key: String,
+    #[serde(rename = "wireguard_listen_port")]
+    wireguard_listen_port: u16,
+    peers: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mycelium: Option<MyceliumData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MachineNetworkData {
+    #[serde(rename = "public_ip")]
+    public_ip: String,
+    planetary: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mycelium: Option<MyceliumIpData>,
+    interfaces: Vec<MachineInterfaceData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ZMachineData {
+    flist: String,
+    network: MachineNetworkData,
     size: u64,
     compute_capacity: MachineCapacityData,
     #[serde(default)]
@@ -532,6 +756,29 @@ impl LiveClient {
         }
     }
 
+    pub async fn deploy_vm(&self, request: VmDeployment) -> Result<DeploymentOutcome, GridError> {
+        validate_vm_request(&request)?;
+        match &request.placement {
+            NodePlacement::Auto(requirements) => {
+                let node = self
+                    .pick_zmachine_node(
+                        requirements,
+                        request.vm.public_ipv4,
+                        request.vm.public_ipv6,
+                    )
+                    .await?;
+                self.deploy_vm_on_node(node, request).await
+            }
+            NodePlacement::Fixed {
+                node_id,
+                node_twin_id,
+            } => {
+                let node = ProxyNode::fixed(*node_id, *node_twin_id);
+                self.deploy_vm_on_node(node, request).await
+            }
+        }
+    }
+
     pub async fn deploy_vm_on_existing_network(
         &self,
         node_id: u32,
@@ -564,6 +811,44 @@ impl LiveClient {
 
     pub fn twin_id(&self) -> u32 {
         self.identity.twin_id
+    }
+
+    pub async fn cancel_contract(&self, contract_id: u64) -> Result<(), GridError> {
+        if contract_id == 0 {
+            return Ok(());
+        }
+        submit_cancel_contract(&self.chain, &self.signer, contract_id)
+            .await
+            .map_err(|err| GridError::backend(format!("cancel contract {contract_id}: {err}")))
+    }
+
+    pub async fn cancel_deployment_outcome(
+        &self,
+        outcome: &DeploymentOutcome,
+    ) -> Result<(), GridError> {
+        if outcome.vm_contract_id != 0 {
+            let _ = self
+                .rmb_call::<_, serde_json::Value>(
+                    outcome.node_twin_id,
+                    "zos.deployment.delete",
+                    &json!({ "contract_id": outcome.vm_contract_id }),
+                    None,
+                )
+                .await;
+            self.cancel_contract(outcome.vm_contract_id).await?;
+        }
+        if outcome.network_contract_id != 0 {
+            let _ = self
+                .rmb_call::<_, serde_json::Value>(
+                    outcome.node_twin_id,
+                    "zos.deployment.delete",
+                    &json!({ "contract_id": outcome.network_contract_id }),
+                    None,
+                )
+                .await;
+            self.cancel_contract(outcome.network_contract_id).await?;
+        }
+        Ok(())
     }
 
     async fn deploy_vm_light_on_node(
@@ -613,6 +898,7 @@ impl LiveClient {
                     node.node_id,
                     &network_deployment.metadata,
                     &network_hash,
+                    public_ip_count(&network_deployment.workloads),
                 )
                 .await
                 .map_err(|err| GridError::backend(format!("create network contract: {err}")))?;
@@ -640,7 +926,7 @@ impl LiveClient {
         let vm_name = deployment_names.vm_name;
         let vm = build_vm_light(&vm_name, &network_name, &vm_ip, &request.vm);
         let vm_metadata = deployment_metadata(&vm_name, "vm-light", &vm_name);
-        let mut vm_deployment = DeployDeployment::new(self.identity.twin_id, vm_metadata, vec![vm]);
+        let mut vm_deployment = DeployDeployment::new(self.identity.twin_id, vm_metadata, vm);
         sign_deployment(&mut vm_deployment, self.identity.twin_id, &self.signer)?;
         let vm_hash = deployment_hash_hex(&vm_deployment)?;
         debug_dump("vm", &vm_deployment, &vm_hash);
@@ -651,6 +937,7 @@ impl LiveClient {
             node.node_id,
             &vm_deployment.metadata,
             &vm_hash,
+            public_ip_count(&vm_deployment.workloads),
         )
         .await
         .map_err(|err| GridError::backend(format!("create vm contract: {err}")))?;
@@ -708,6 +995,163 @@ impl LiveClient {
             vm_contract_id,
             vm_ip,
             mycelium_ip,
+            public_ipv4: String::new(),
+            public_ipv6: String::new(),
+            console_url,
+        })
+    }
+
+    async fn deploy_vm_on_node(
+        &self,
+        node: ProxyNode,
+        request: VmDeployment,
+    ) -> Result<DeploymentOutcome, GridError> {
+        trace_step(format!(
+            "selected node {} twin {}",
+            node.node_id, node.twin_id
+        ));
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| GridError::backend(err.to_string()))?
+            .as_secs();
+        let vm_name = request
+            .vm
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("rust_vm_{suffix}"));
+        let (network_name, vm_ip, network_contract_id) = match &request.network {
+            FullNetworkTarget::Create(network_spec) => {
+                let network_name = network_spec
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("rust_net_{suffix}"));
+                let ip_range = network_spec
+                    .ip_range
+                    .clone()
+                    .unwrap_or_else(|| format!("10.{}.0.0/16", 10 + (suffix % 180) as u8));
+                let subnet = network_spec
+                    .subnet
+                    .clone()
+                    .unwrap_or_else(|| format!("10.{}.2.0/24", 10 + (suffix % 180) as u8));
+                let vm_ip = vm_ip_from_subnet(&subnet)?;
+                let wg_listen_port = match network_spec.wireguard_listen_port {
+                    Some(port) => port,
+                    None => self.get_free_wg_port(node.twin_id).await?,
+                };
+                let network = build_network(
+                    &network_name,
+                    &ip_range,
+                    &subnet,
+                    network_spec
+                        .wireguard_private_key
+                        .clone()
+                        .unwrap_or_else(generate_wireguard_private_key),
+                    wg_listen_port,
+                    network_spec.mycelium_key.clone(),
+                );
+                let network_metadata = deployment_metadata(&network_name, "network", "Network");
+                let mut network_deployment =
+                    DeployDeployment::new(self.identity.twin_id, network_metadata, vec![network]);
+                sign_deployment(&mut network_deployment, self.identity.twin_id, &self.signer)?;
+                let network_hash = deployment_hash_hex(&network_deployment)?;
+                debug_dump("network", &network_deployment, &network_hash);
+                submit_create_node_contract(
+                    &self.chain,
+                    &self.signer,
+                    node.node_id,
+                    &network_deployment.metadata,
+                    &network_hash,
+                    public_ip_count(&network_deployment.workloads),
+                )
+                .await
+                .map_err(|err| GridError::backend(format!("create network contract: {err}")))?;
+                let network_contract_id =
+                    self.wait_for_contract(node.node_id, &network_hash).await?;
+                trace_step(format!("network contract id {network_contract_id}"));
+                network_deployment.contract_id = network_contract_id;
+                self.deploy_and_confirm(node.twin_id, &network_deployment)
+                    .await
+                    .map_err(|err| GridError::backend(format!("deploy network over RMB: {err}")))?;
+                self.wait_for_workloads(node.twin_id, network_contract_id)
+                    .await
+                    .map_err(|err| GridError::backend(format!("wait network workloads: {err}")))?;
+                (network_name, vm_ip, network_contract_id)
+            }
+            FullNetworkTarget::Existing(existing) => {
+                (existing.name.clone(), existing.ip.clone(), 0)
+            }
+        };
+
+        let vm_workloads = build_vm(&vm_name, &network_name, &vm_ip, &request.vm);
+        let vm_metadata = deployment_metadata(&vm_name, "vm", &vm_name);
+        let mut vm_deployment =
+            DeployDeployment::new(self.identity.twin_id, vm_metadata, vm_workloads);
+        sign_deployment(&mut vm_deployment, self.identity.twin_id, &self.signer)?;
+        let vm_hash = deployment_hash_hex(&vm_deployment)?;
+        debug_dump("vm", &vm_deployment, &vm_hash);
+        submit_create_node_contract(
+            &self.chain,
+            &self.signer,
+            node.node_id,
+            &vm_deployment.metadata,
+            &vm_hash,
+            public_ip_count(&vm_deployment.workloads),
+        )
+        .await
+        .map_err(|err| GridError::backend(format!("create vm contract: {err}")))?;
+        let vm_contract_id = self.wait_for_contract(node.node_id, &vm_hash).await?;
+        vm_deployment.contract_id = vm_contract_id;
+        self.deploy_and_confirm(node.twin_id, &vm_deployment)
+            .await
+            .map_err(|err| GridError::backend(format!("deploy vm over RMB: {err}")))?;
+        let vm_changes = self
+            .wait_for_workloads(node.twin_id, vm_contract_id)
+            .await
+            .map_err(|err| GridError::backend(format!("wait vm workloads: {err}")))?;
+        let vm_state = self
+            .rmb_call::<_, serde_json::Value>(
+                node.twin_id,
+                "zos.deployment.get",
+                &json!({ "contract_id": vm_contract_id }),
+                None,
+            )
+            .await
+            .map_err(|err| GridError::backend(format!("load vm deployment from node: {err}")))?;
+        let workloads = extract_workloads(vm_state)?;
+        let vm_workload = workloads
+            .iter()
+            .find(|workload| workload.name == vm_name)
+            .cloned()
+            .ok_or_else(|| GridError::NotFound(format!("vm workload {vm_name}")))?;
+        let result: serde_json::Value = vm_workload.result.data;
+        let mycelium_ip = result
+            .get("mycelium_ip")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let console_url = result
+            .get("console_url")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let (public_ipv4, public_ipv6) = resolve_public_ips_from_workloads(&workloads, &vm_name);
+        if vm_changes
+            .iter()
+            .any(|workload| workload.result.state == zos::STATE_ERROR)
+        {
+            return Err(GridError::backend("vm deployment entered error state"));
+        }
+        Ok(DeploymentOutcome {
+            node_id: node.node_id,
+            node_twin_id: node.twin_id,
+            network_name,
+            network_contract_id,
+            vm_name,
+            vm_contract_id,
+            vm_ip,
+            mycelium_ip,
+            public_ipv4,
+            public_ipv6,
             console_url,
         })
     }
@@ -741,6 +1185,79 @@ impl LiveClient {
                     "no devnet node with network-light + zmachine-light".to_string(),
                 )
             })
+    }
+
+    async fn pick_zmachine_node(
+        &self,
+        requirements: &NodeRequirements,
+        needs_public_ipv4: bool,
+        needs_public_ipv6: bool,
+    ) -> Result<ProxyNode, GridError> {
+        let response = self
+            .http
+            .get(format!("{}/nodes", self.grid_proxy_url))
+            .query(&[("status", "up")])
+            .send()
+            .await
+            .map_err(|err| GridError::backend(err.to_string()))?;
+        let nodes: Vec<ProxyNode> = parse_json_response(response, "grid proxy /nodes").await?;
+        nodes
+            .into_iter()
+            .find(|node| {
+                let has_base = node.status == "up"
+                    && node.healthy
+                    && has_feature(node, "network")
+                    && has_feature(node, "zmachine")
+                    && has_feature(node, "volume")
+                    && free_mru(node) >= requirements.min_memory_bytes
+                    && free_sru(node) >= requirements.min_rootfs_bytes
+                    && node
+                        .total_resources
+                        .cru
+                        .saturating_sub(node.used_resources.cru)
+                        >= requirements.min_cru;
+                if !has_base {
+                    return false;
+                }
+                if needs_public_ipv4
+                    && (!has_feature(node, "ip")
+                        || node.farm_free_ips == 0
+                        || !node_has_usable_public_ipv4(node))
+                {
+                    return false;
+                }
+                if needs_public_ipv6
+                    && ((!has_feature(node, "ipv4") && !has_feature(node, "ip"))
+                        || node.farm_free_ips == 0
+                        || !node_has_usable_public_ipv6(node))
+                {
+                    return false;
+                }
+                true
+            })
+            .ok_or_else(|| {
+                GridError::NotFound(
+                    "no devnet node with network + zmachine capabilities".to_string(),
+                )
+            })
+    }
+
+    async fn get_free_wg_port(&self, node_twin_id: u32) -> Result<u16, GridError> {
+        let used_ports: Vec<u16> = self
+            .rmb_call(
+                node_twin_id,
+                "zos.network.list_wg_ports",
+                &json!(null),
+                None,
+            )
+            .await
+            .map_err(|err| GridError::backend(format!("load wg ports: {err}")))?;
+        for port in 1024u16..32767u16 {
+            if !used_ports.contains(&port) {
+                return Ok(port);
+            }
+        }
+        Err(GridError::backend("no free wireguard port found"))
     }
 
     async fn ensure_twin_relay(&self) -> Result<(), GridError> {
@@ -1283,6 +1800,19 @@ fn validate_vm_light_request(request: &VmLightDeployment) -> Result<(), GridErro
     if request.vm.entrypoint.trim().is_empty() {
         return Err(GridError::validation("vm entrypoint must not be empty"));
     }
+    for volume in &request.vm.volumes {
+        if volume.name.trim().is_empty() {
+            return Err(GridError::validation("volume name must not be empty"));
+        }
+        if volume.size_bytes == 0 {
+            return Err(GridError::validation(
+                "volume size_bytes must be greater than zero",
+            ));
+        }
+        if volume.mountpoint.trim().is_empty() {
+            return Err(GridError::validation("volume mountpoint must not be empty"));
+        }
+    }
     match &request.network {
         NetworkTarget::Create(network) => {
             if let Some(name) = &network.name {
@@ -1295,6 +1825,63 @@ fn validate_vm_light_request(request: &VmLightDeployment) -> Result<(), GridErro
             }
         }
         NetworkTarget::Existing(existing) => {
+            if existing.name.trim().is_empty() {
+                return Err(GridError::validation(
+                    "existing network name must not be empty",
+                ));
+            }
+            if existing.ip.trim().is_empty() {
+                return Err(GridError::validation(
+                    "existing network ip must not be empty",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_vm_request(request: &VmDeployment) -> Result<(), GridError> {
+    if request.vm.cpu == 0 {
+        return Err(GridError::validation("vm cpu must be greater than zero"));
+    }
+    if request.vm.memory_bytes == 0 {
+        return Err(GridError::validation(
+            "vm memory_bytes must be greater than zero",
+        ));
+    }
+    if request.vm.rootfs_size_bytes == 0 {
+        return Err(GridError::validation(
+            "vm rootfs_size_bytes must be greater than zero",
+        ));
+    }
+    if request.vm.flist.trim().is_empty() {
+        return Err(GridError::validation("vm flist must not be empty"));
+    }
+    for volume in &request.vm.volumes {
+        if volume.name.trim().is_empty() {
+            return Err(GridError::validation("volume name must not be empty"));
+        }
+        if volume.size_bytes == 0 {
+            return Err(GridError::validation(
+                "volume size_bytes must be greater than zero",
+            ));
+        }
+        if volume.mountpoint.trim().is_empty() {
+            return Err(GridError::validation("volume mountpoint must not be empty"));
+        }
+    }
+    match &request.network {
+        FullNetworkTarget::Create(network) => {
+            if let Some(ip_range) = &network.ip_range {
+                if !ip_range.ends_with("/16") {
+                    return Err(GridError::validation("network ip_range must be a /16"));
+                }
+            }
+            if let Some(subnet) = &network.subnet {
+                vm_ip_from_subnet(subnet)?;
+            }
+        }
+        FullNetworkTarget::Existing(existing) => {
             if existing.name.trim().is_empty() {
                 return Err(GridError::validation(
                     "existing network name must not be empty",
@@ -1341,6 +1928,48 @@ fn vm_ip_from_subnet(subnet: &str) -> Result<String, GridError> {
         return Err(GridError::validation(format!("invalid subnet: {subnet}")));
     }
     Ok(format!("{first}.{second}.{third}.5"))
+}
+
+fn generate_wireguard_private_key() -> String {
+    let mut key = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut key);
+    key[0] &= 248;
+    key[31] &= 127;
+    key[31] |= 64;
+    base64::engine::general_purpose::STANDARD.encode(key)
+}
+
+fn resolve_public_ips_from_workloads(
+    workloads: &[zos::Workload],
+    workload_name: &str,
+) -> (String, String) {
+    let public_ip_workload_name = format!("{workload_name}ip");
+    let Some(wl) = workloads
+        .iter()
+        .find(|candidate| candidate.name == public_ip_workload_name)
+    else {
+        return (String::new(), String::new());
+    };
+    if !wl.result.is_okay() {
+        return (String::new(), String::new());
+    }
+    let data = wl.result.data.clone();
+    let ipv4 = extract_ip_value(data.get("ip")).unwrap_or_default();
+    let ipv6 = extract_ip_value(data.get("ipv6"))
+        .or_else(|| extract_ip_value(data.get("ip6")))
+        .unwrap_or_default();
+    (ipv4, ipv6)
+}
+
+fn extract_ip_value(value: Option<&serde_json::Value>) -> Option<String> {
+    match value? {
+        serde_json::Value::String(ip) if !ip.is_empty() => Some(ip.clone()),
+        serde_json::Value::Object(map) => map
+            .get("ip")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        _ => None,
+    }
 }
 
 impl DeployDeployment {
@@ -1390,7 +2019,54 @@ fn build_network_light(name: &str, subnet: &str, mycelium_key: Vec<u8>) -> Deplo
     }
 }
 
-fn build_vm_light(name: &str, network_name: &str, ip: &str, spec: &VmLightSpec) -> DeployWorkload {
+fn build_network(
+    name: &str,
+    ip_range: &str,
+    subnet: &str,
+    wireguard_private_key: String,
+    wireguard_listen_port: u16,
+    mycelium_key: Option<Vec<u8>>,
+) -> DeployWorkload {
+    DeployWorkload {
+        version: 0,
+        name: name.to_string(),
+        workload_type: zos::NETWORK_TYPE.to_string(),
+        data: serde_json::to_value(FullNetworkData {
+            ip_range: ip_range.to_string(),
+            subnet: subnet.to_string(),
+            wireguard_private_key,
+            wireguard_listen_port,
+            peers: Vec::new(),
+            mycelium: mycelium_key.map(|key| MyceliumData {
+                key,
+                peers: Vec::new(),
+            }),
+        })
+        .unwrap_or_default(),
+        metadata: serde_json::to_string(&NetworkWorkloadMetadata {
+            version: workloads::VERSION4,
+            user_accesses: None,
+        })
+        .unwrap_or_default(),
+        description: "network to deploy vm".to_string(),
+        result: empty_result_data(),
+    }
+}
+
+fn build_vm_light(
+    name: &str,
+    network_name: &str,
+    ip: &str,
+    spec: &VmLightSpec,
+) -> Vec<DeployWorkload> {
+    let mut workloads = Vec::new();
+    for volume in &spec.volumes {
+        workloads.push(build_volume_workload(
+            &volume.name,
+            volume.size_bytes,
+            &volume.description,
+        ));
+    }
     let data = ZMachineLightData {
         flist: spec.flist.clone(),
         network: MachineNetworkLightData {
@@ -1412,7 +2088,76 @@ fn build_vm_light(name: &str, network_name: &str, ip: &str, spec: &VmLightSpec) 
             memory: spec.memory_bytes,
         },
         mounts: spec
-            .mounts
+            .volumes
+            .iter()
+            .map(|mount| MachineMountData {
+                name: mount.name.clone(),
+                mountpoint: mount.mountpoint.clone(),
+            })
+            .chain(spec.mounts.iter().map(|mount| MachineMountData {
+                name: mount.name.clone(),
+                mountpoint: mount.mountpoint.clone(),
+            }))
+            .collect(),
+        entrypoint: spec.entrypoint.clone(),
+        env: spec.env.clone(),
+        corex: spec.corex,
+        gpu: spec.gpu.clone(),
+    };
+    workloads.push(DeployWorkload {
+        version: 0,
+        name: name.to_string(),
+        workload_type: zos::ZMACHINE_LIGHT_TYPE.to_string(),
+        data: serde_json::to_value(data).unwrap_or_default(),
+        metadata: String::new(),
+        description: String::new(),
+        result: empty_result_data(),
+    });
+    workloads
+}
+
+fn build_vm(name: &str, network_name: &str, ip: &str, spec: &VmSpec) -> Vec<DeployWorkload> {
+    let public_ip_name = if spec.public_ipv4 || spec.public_ipv6 {
+        format!("{name}ip")
+    } else {
+        String::new()
+    };
+    let mut workloads = Vec::new();
+    if !public_ip_name.is_empty() {
+        workloads.push(from_zos_workload(workloads::construct_public_ip_workload(
+            &public_ip_name,
+            spec.public_ipv4,
+            spec.public_ipv6,
+        )));
+    }
+    for volume in &spec.volumes {
+        workloads.push(build_volume_workload(
+            &volume.name,
+            volume.size_bytes,
+            &volume.description,
+        ));
+    }
+    let data = ZMachineData {
+        flist: spec.flist.clone(),
+        network: MachineNetworkData {
+            public_ip: public_ip_name,
+            planetary: spec.planetary,
+            mycelium: spec.mycelium_seed.clone().map(|seed| MyceliumIpData {
+                network: network_name.to_string(),
+                seed,
+            }),
+            interfaces: vec![MachineInterfaceData {
+                network: network_name.to_string(),
+                ip: ip.to_string(),
+            }],
+        },
+        size: spec.rootfs_size_bytes,
+        compute_capacity: MachineCapacityData {
+            cpu: spec.cpu,
+            memory: spec.memory_bytes,
+        },
+        mounts: spec
+            .volumes
             .iter()
             .map(|mount| MachineMountData {
                 name: mount.name.clone(),
@@ -1424,13 +2169,38 @@ fn build_vm_light(name: &str, network_name: &str, ip: &str, spec: &VmLightSpec) 
         corex: spec.corex,
         gpu: spec.gpu.clone(),
     };
-    DeployWorkload {
+    workloads.push(DeployWorkload {
         version: 0,
         name: name.to_string(),
-        workload_type: zos::ZMACHINE_LIGHT_TYPE.to_string(),
+        workload_type: zos::ZMACHINE_TYPE.to_string(),
         data: serde_json::to_value(data).unwrap_or_default(),
         metadata: String::new(),
         description: String::new(),
+        result: empty_result_data(),
+    });
+    workloads
+}
+
+fn from_zos_workload(workload: zos::Workload) -> DeployWorkload {
+    DeployWorkload {
+        version: workload.version,
+        name: workload.name,
+        workload_type: workload.workload_type,
+        data: workload.data,
+        metadata: workload.metadata,
+        description: workload.description,
+        result: workload.result,
+    }
+}
+
+fn build_volume_workload(name: &str, size_bytes: u64, description: &str) -> DeployWorkload {
+    DeployWorkload {
+        version: 0,
+        name: name.to_string(),
+        workload_type: zos::VOLUME_TYPE.to_string(),
+        data: json!({ "size": size_bytes }),
+        metadata: String::new(),
+        description: description.to_string(),
         result: empty_result_data(),
     }
 }
@@ -1541,6 +2311,83 @@ fn workload_challenge(out: &mut String, workload: &DeployWorkload) -> Result<(),
                 out.push_str(&gpu);
             }
         }
+        zos::VOLUME_TYPE => {
+            let size = workload
+                .data
+                .get("size")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| GridError::validation("live volume workload missing size"))?;
+            write!(out, "{size}").map_err(|err| GridError::backend(err.to_string()))?;
+        }
+        zos::PUBLIC_IP_TYPE => {
+            let v4 = workload
+                .data
+                .get("v4")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let v6 = workload
+                .data
+                .get("v6")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            write!(out, "{v4}{v6}").map_err(|err| GridError::backend(err.to_string()))?;
+        }
+        zos::NETWORK_TYPE => {
+            let data: FullNetworkData =
+                serde_json::from_value(workload.data.clone()).map_err(GridError::from)?;
+            out.push_str(&data.ip_range);
+            out.push_str(&data.subnet);
+            out.push_str(&data.wireguard_private_key);
+            write!(out, "{}", data.wireguard_listen_port)
+                .map_err(|err| GridError::backend(err.to_string()))?;
+            for peer in data.peers {
+                out.push_str(&peer.to_string());
+            }
+            if let Some(mycelium) = data.mycelium {
+                out.push_str(&hex::encode(mycelium.key));
+                for peer in mycelium.peers {
+                    out.push_str(&peer);
+                }
+            }
+        }
+        zos::ZMACHINE_TYPE => {
+            let data: ZMachineData =
+                serde_json::from_value(workload.data.clone()).map_err(GridError::from)?;
+            out.push_str(&data.flist);
+            out.push_str(&data.network.public_ip);
+            write!(out, "{}", data.network.planetary)
+                .map_err(|err| GridError::backend(err.to_string()))?;
+            for interface in data.network.interfaces {
+                out.push_str(&interface.network);
+                out.push_str(&interface.ip);
+            }
+            if let Some(mycelium) = data.network.mycelium {
+                out.push_str(&mycelium.network);
+                out.push_str(&hex::encode(mycelium.seed));
+            }
+            write!(out, "{}", data.size).map_err(|err| GridError::backend(err.to_string()))?;
+            write!(
+                out,
+                "{}{}",
+                data.compute_capacity.cpu, data.compute_capacity.memory
+            )
+            .map_err(|err| GridError::backend(err.to_string()))?;
+            for mount in data.mounts {
+                out.push_str(&mount.name);
+                out.push_str(&mount.mountpoint);
+            }
+            out.push_str(&data.entrypoint);
+            let mut keys: Vec<_> = data.env.keys().cloned().collect();
+            keys.sort();
+            for key in keys {
+                out.push_str(&key);
+                out.push('=');
+                out.push_str(&data.env[&key]);
+            }
+            for gpu in data.gpu {
+                out.push_str(&gpu);
+            }
+        }
         other => {
             return Err(GridError::validation(format!(
                 "unsupported live workload type {other}"
@@ -1556,6 +2403,7 @@ async fn submit_create_node_contract(
     node_id: u32,
     deployment_data: &str,
     deployment_hash_hex: &str,
+    public_ips: u32,
 ) -> Result<(), GridError> {
     let mut hash_bytes = [0u8; 32];
     hash_bytes.copy_from_slice(deployment_hash_hex.as_bytes());
@@ -1566,7 +2414,7 @@ async fn submit_create_node_contract(
             Value::u128(u128::from(node_id)),
             Value::from_bytes(hash_bytes),
             Value::from_bytes(deployment_data.as_bytes()),
-            Value::u128(0),
+            Value::u128(u128::from(public_ips)),
             Value::unnamed_variant("None", []),
         ],
     );
@@ -1590,6 +2438,24 @@ async fn submit_update_twin_relay(
             Value::unnamed_variant("Some", [Value::string(relay)]),
             Value::unnamed_variant("None", []),
         ],
+    );
+    let progress = chain
+        .tx()
+        .sign_and_submit_then_watch_default(&tx, signer)
+        .await
+        .map_err(|err| GridError::backend(err.to_string()))?;
+    wait_for_finalized(progress).await
+}
+
+async fn submit_cancel_contract(
+    chain: &OnlineClient<PolkadotConfig>,
+    signer: &Keypair,
+    contract_id: u64,
+) -> Result<(), GridError> {
+    let tx = dynamic::tx(
+        "SmartContractModule",
+        "cancel_contract",
+        vec![Value::u128(u128::from(contract_id))],
     );
     let progress = chain
         .tx()
@@ -1664,6 +2530,23 @@ fn free_sru(node: &ProxyNode) -> u64 {
     node.total_resources
         .sru
         .saturating_sub(node.used_resources.sru)
+}
+
+fn public_ip_count(workloads: &[DeployWorkload]) -> u32 {
+    workloads
+        .iter()
+        .filter(|workload| workload.workload_type == zos::PUBLIC_IP_TYPE)
+        .count() as u32
+}
+
+fn node_has_usable_public_ipv4(node: &ProxyNode) -> bool {
+    !node.public_config.ipv4.trim().is_empty()
+        && !node.public_config.gw4.trim().is_empty()
+        && !node.public_config.domain.trim().is_empty()
+}
+
+fn node_has_usable_public_ipv6(node: &ProxyNode) -> bool {
+    !node.public_config.ipv6.trim().is_empty() && !node.public_config.gw6.trim().is_empty()
 }
 
 fn relay_host(relay_url: &str) -> Result<String, GridError> {
@@ -1815,7 +2698,11 @@ fn trace_step(message: impl AsRef<str>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_workloads, normalize_workload};
+    use super::{
+        DeployWorkload, NodeRequirements, ProxyCapacity, ProxyNode, ProxyPublicConfig,
+        extract_workloads, free_mru, free_sru, has_feature, node_has_usable_public_ipv4,
+        normalize_workload, public_ip_count,
+    };
     use crate::zos;
     use serde_json::json;
 
@@ -1915,6 +2802,130 @@ mod tests {
     fn vm_ip_from_subnet_uses_host_five() {
         let ip = super::vm_ip_from_subnet("10.24.2.0/24").expect("vm ip");
         assert_eq!(ip, "10.24.2.5");
+    }
+
+    #[test]
+    fn validate_vm_request_rejects_zero_sized_volume() {
+        let request = super::VmDeployment {
+            placement: super::NodePlacement::default(),
+            network: super::FullNetworkTarget::Create(super::FullNetworkSpec::default()),
+            vm: super::VmSpec {
+                volumes: vec![super::VolumeMountSpec {
+                    name: "data".to_string(),
+                    size_bytes: 0,
+                    mountpoint: "/data".to_string(),
+                    description: String::new(),
+                }],
+                ..Default::default()
+            },
+        };
+
+        let err = super::validate_vm_request(&request).expect_err("zero-sized volume must fail");
+        assert!(matches!(err, crate::GridError::Validation(_)));
+    }
+
+    #[test]
+    fn public_ipv4_node_requires_usable_public_config() {
+        let unusable = proxy_node_with_public_ipv4("", "", "", 5);
+        assert!(has_feature(&unusable, "ip"));
+        assert!(!node_has_usable_public_ipv4(&unusable));
+
+        let usable = proxy_node_with_public_ipv4(
+            "185.206.122.32/24",
+            "185.206.122.1",
+            "gent02.dev.grid.tf",
+            5,
+        );
+        assert!(node_has_usable_public_ipv4(&usable));
+    }
+
+    #[test]
+    fn public_ipv4_node_requires_free_ips() {
+        let node = proxy_node_with_public_ipv4(
+            "185.206.122.32/24",
+            "185.206.122.1",
+            "gent02.dev.grid.tf",
+            0,
+        );
+        let has_base = node.status == "up"
+            && node.healthy
+            && has_feature(&node, "network")
+            && has_feature(&node, "zmachine")
+            && has_feature(&node, "volume")
+            && free_mru(&node) >= NodeRequirements::default().min_memory_bytes
+            && free_sru(&node) >= NodeRequirements::default().min_rootfs_bytes
+            && node
+                .total_resources
+                .cru
+                .saturating_sub(node.used_resources.cru)
+                >= NodeRequirements::default().min_cru;
+        assert!(has_base);
+        assert_eq!(node.farm_free_ips, 0);
+    }
+
+    #[test]
+    fn public_ip_count_matches_public_ip_workloads() {
+        let workloads = vec![
+            DeployWorkload {
+                version: 0,
+                name: "vmip".to_string(),
+                workload_type: zos::PUBLIC_IP_TYPE.to_string(),
+                data: json!({ "v4": true, "v6": false }),
+                metadata: String::new(),
+                description: String::new(),
+                result: super::empty_result_data(),
+            },
+            DeployWorkload {
+                version: 0,
+                name: "vm".to_string(),
+                workload_type: zos::ZMACHINE_TYPE.to_string(),
+                data: json!({}),
+                metadata: String::new(),
+                description: String::new(),
+                result: super::empty_result_data(),
+            },
+        ];
+
+        assert_eq!(public_ip_count(&workloads), 1);
+    }
+
+    fn proxy_node_with_public_ipv4(
+        ipv4: &str,
+        gw4: &str,
+        domain: &str,
+        farm_free_ips: u64,
+    ) -> ProxyNode {
+        ProxyNode {
+            node_id: 11,
+            twin_id: 21,
+            status: "up".to_string(),
+            healthy: true,
+            features: vec![
+                "network".to_string(),
+                "zmachine".to_string(),
+                "volume".to_string(),
+                "ip".to_string(),
+                "ipv4".to_string(),
+            ],
+            farm_free_ips,
+            public_config: ProxyPublicConfig {
+                domain: domain.to_string(),
+                gw4: gw4.to_string(),
+                gw6: "2a10:b600:1::1".to_string(),
+                ipv4: ipv4.to_string(),
+                ipv6: "2a10:b600:1::0025:90f0:ede1/64".to_string(),
+            },
+            total_resources: ProxyCapacity {
+                cru: 4,
+                mru: 8 * 1024 * 1024 * 1024,
+                sru: 100 * 1024 * 1024 * 1024,
+            },
+            used_resources: ProxyCapacity {
+                cru: 0,
+                mru: 0,
+                sru: 0,
+            },
+        }
     }
 }
 
