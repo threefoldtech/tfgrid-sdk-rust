@@ -109,9 +109,7 @@ impl Calculator {
             .map(|node_id| self.substrate_conn.get_node(node_id))
             .transpose()?;
 
-        let is_certified_node = node
-            .as_ref()
-            .map_or(false, |n| n.certification.is_certified);
+        let is_certified_node = node.as_ref().is_some_and(|n| n.certification.is_certified);
         let mut total = calculate_total_overdraft_tft(&payment_state);
         total += self.get_unbilled_amount_in_tft(&contract, is_certified_node)?;
         total +=
@@ -220,10 +218,8 @@ impl Calculator {
                 let hru = bytes_to_gib(resources.used.hru);
                 let sru = bytes_to_gib(resources.used.sru);
                 let cru = resources.used.cru;
-                let is_on_rented_node = match self.substrate_conn.get_node_rent_contract(node.id) {
-                    Ok(id) if id > 0 => true,
-                    _ => false,
-                };
+                let is_on_rented_node =
+                    matches!(self.substrate_conn.get_node_rent_contract(node.id), Ok(id) if id > 0);
 
                 if is_on_rented_node && node_contract.public_ips_count > 0 {
                     let public_ips_cost = self.calculate_ipv4_cost_per_month()?

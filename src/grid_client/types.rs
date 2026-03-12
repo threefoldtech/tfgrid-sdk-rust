@@ -73,21 +73,11 @@ impl NodePlacement {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NetworkLightSpec {
     pub name: Option<String>,
     pub subnet: Option<String>,
     pub mycelium_key: Option<Vec<u8>>,
-}
-
-impl Default for NetworkLightSpec {
-    fn default() -> Self {
-        Self {
-            name: None,
-            subnet: None,
-            mycelium_key: None,
-        }
-    }
 }
 
 impl NetworkLightSpec {
@@ -175,7 +165,7 @@ pub struct VmLightDeployment {
     pub vm: VmLightSpec,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FullNetworkSpec {
     pub name: Option<String>,
     pub ip_range: Option<String>,
@@ -183,19 +173,6 @@ pub struct FullNetworkSpec {
     pub mycelium_key: Option<Vec<u8>>,
     pub wireguard_private_key: Option<String>,
     pub wireguard_listen_port: Option<u16>,
-}
-
-impl Default for FullNetworkSpec {
-    fn default() -> Self {
-        Self {
-            name: None,
-            ip_range: None,
-            subnet: None,
-            mycelium_key: None,
-            wireguard_private_key: None,
-            wireguard_listen_port: None,
-        }
-    }
 }
 
 impl FullNetworkSpec {

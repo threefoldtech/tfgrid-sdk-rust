@@ -94,7 +94,7 @@ impl ResultData {
     }
 
     pub fn is_any(&self, states: &[&str]) -> bool {
-        states.iter().any(|state| state == &&self.state)
+        states.iter().any(|state| *state == self.state)
     }
 }
 
@@ -117,7 +117,7 @@ impl Workload {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Deployment {
     pub version: u32,
     pub twin_id: u32,
@@ -140,21 +140,6 @@ impl Deployment {
             .filter(|w| w.workload_type == kind)
             .cloned()
             .collect()
-    }
-}
-
-impl Default for Deployment {
-    fn default() -> Self {
-        Self {
-            version: 0,
-            twin_id: 0,
-            contract_id: 0,
-            metadata: String::new(),
-            description: String::new(),
-            expiration: 0,
-            signature_requirement: SignatureRequirement::default(),
-            workloads: Vec::new(),
-        }
     }
 }
 

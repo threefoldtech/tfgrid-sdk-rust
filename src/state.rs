@@ -244,30 +244,30 @@ impl State {
 
         znet.node_deployment_id = node_deployments;
 
-        if znet.add_wg_access && !public_node_endpoint.is_empty() {
-            if let Some(ext_ip) = znet.external_ip.as_ref() {
-                if let Some(wg_ip) = compute_wg_ip(ext_ip) {
-                    let port = znet.wg_port.get(&znet.public_node_id).copied().unwrap_or(0);
-                    if port == 0 {
-                        return Err(GridError::validation(format!(
-                            "missing wireguard port for network public node {}",
-                            znet.public_node_id
-                        )));
-                    }
-                    let peer_key = znet
-                        .keys
-                        .get(&znet.public_node_id)
-                        .cloned()
-                        .unwrap_or_default();
-                    znet.access_wg_config = format_wg_config(
-                        &wg_ip,
-                        &znet.external_sk,
-                        &peer_key,
-                        &format!("{}:{}", public_node_endpoint, port),
-                        &znet.ip_range,
-                    );
-                }
+        if znet.add_wg_access
+            && !public_node_endpoint.is_empty()
+            && let Some(ext_ip) = znet.external_ip.as_ref()
+            && let Some(wg_ip) = compute_wg_ip(ext_ip)
+        {
+            let port = znet.wg_port.get(&znet.public_node_id).copied().unwrap_or(0);
+            if port == 0 {
+                return Err(GridError::validation(format!(
+                    "missing wireguard port for network public node {}",
+                    znet.public_node_id
+                )));
             }
+            let peer_key = znet
+                .keys
+                .get(&znet.public_node_id)
+                .cloned()
+                .unwrap_or_default();
+            znet.access_wg_config = format_wg_config(
+                &wg_ip,
+                &znet.external_sk,
+                &peer_key,
+                &format!("{}:{}", public_node_endpoint, port),
+                &znet.ip_range,
+            );
         }
 
         self.networks
@@ -581,17 +581,9 @@ impl NetworkState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Network {
     pub subnets: HashMap<u32, String>,
-}
-
-impl Default for Network {
-    fn default() -> Self {
-        Self {
-            subnets: HashMap::new(),
-        }
-    }
 }
 impl Network {
     pub fn new() -> Self {

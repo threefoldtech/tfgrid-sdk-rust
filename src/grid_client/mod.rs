@@ -1287,13 +1287,12 @@ impl GridClient {
                 trace_step(format!("workloads reached ok for contract {contract_id}"));
                 return Ok(changes);
             }
-            if changes.is_empty() {
-                if let Some(workloads) = self
+            if changes.is_empty()
+                && let Some(workloads) = self
                     .workloads_from_get(node_twin_id, contract_id, deadline)
                     .await?
-                {
-                    return Ok(workloads);
-                }
+            {
+                return Ok(workloads);
             }
             if Instant::now() >= deadline {
                 return Err(GridError::backend(format!(

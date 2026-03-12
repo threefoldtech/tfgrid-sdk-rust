@@ -52,7 +52,7 @@ fn decode_hex_like(raw: &str) -> Option<Vec<u8>> {
     if raw.is_empty() {
         return Some(Vec::new());
     }
-    if raw.len() % 2 != 0 {
+    if !raw.len().is_multiple_of(2) {
         return None;
     }
     let is_hex = raw.as_bytes().iter().all(|b| b.is_ascii_hexdigit());
@@ -328,6 +328,7 @@ pub struct Deployment {
 }
 
 impl Deployment {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: &str,
         node_id: u32,
@@ -421,8 +422,7 @@ impl Deployment {
                 self.qsfs
                     .iter()
                     .map(|q| q.zos_workload())
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter(),
+                    .collect::<Result<Vec<_>, _>>()?,
             )
             .collect();
 
@@ -596,7 +596,7 @@ impl VM {
             compute_cpu: self.cpus,
             compute_memory_mb: self.memory_mb,
             rootfs_size_mb: self.rootfs_size_mb,
-            mounts: self.mounts.iter().cloned().collect(),
+            mounts: self.mounts.to_vec(),
             env_vars: self.env_vars.clone(),
             entrypoint: self.entrypoint.clone(),
             corex: self.corex,
@@ -690,7 +690,7 @@ impl VMLight {
             compute_cpu: self.cpus,
             compute_memory_mb: self.memory_mb,
             rootfs_size_mb: self.rootfs_size_mb,
-            mounts: self.mounts.iter().cloned().collect(),
+            mounts: self.mounts.to_vec(),
             env_vars: self.env_vars.clone(),
             entrypoint: self.entrypoint.clone(),
             corex: self.corex,
@@ -951,12 +951,12 @@ pub fn new_network_from_workload(
     }
 
     let mut mycelium_keys = HashMap::new();
-    if let Some(mycelium) = data.mycelium.as_ref() {
-        if let Some(hex_key) = mycelium.get("hex_key") {
-            let key = get_hex_bytes(hex_key);
-            if !key.is_empty() {
-                mycelium_keys.insert(node_id, key);
-            }
+    if let Some(mycelium) = data.mycelium.as_ref()
+        && let Some(hex_key) = mycelium.get("hex_key")
+    {
+        let key = get_hex_bytes(hex_key);
+        if !key.is_empty() {
+            mycelium_keys.insert(node_id, key);
         }
     }
 
@@ -1027,12 +1027,12 @@ pub fn new_network_light_from_workload(
     let metadata = metadata.normalized();
 
     let mut mycelium_keys = HashMap::new();
-    if let Some(mycelium) = data.mycelium.as_ref() {
-        if let Some(hex_key) = mycelium.get("hex_key") {
-            let key = get_hex_bytes(hex_key);
-            if !key.is_empty() {
-                mycelium_keys.insert(node_id, key);
-            }
+    if let Some(mycelium) = data.mycelium.as_ref()
+        && let Some(hex_key) = mycelium.get("hex_key")
+    {
+        let key = get_hex_bytes(hex_key);
+        if !key.is_empty() {
+            mycelium_keys.insert(node_id, key);
         }
     }
 
@@ -1099,10 +1099,8 @@ pub fn new_k8s_node_from_workload(
     }
 
     let mut memory_mb = data.compute_memory_mb;
-    if memory_mb == 0 {
-        if data.compute_capacity.memory > 0 {
-            memory_mb = data.compute_capacity.memory / zos::MEGABYTE;
-        }
+    if memory_mb == 0 && data.compute_capacity.memory > 0 {
+        memory_mb = data.compute_capacity.memory / zos::MEGABYTE;
     }
 
     let mycelium_ip_seed = data
@@ -1148,16 +1146,15 @@ pub fn new_k8s_node_from_workload(
     })
 }
 
+type K8sDeploymentResources = (
+    HashMap<String, u64>,
+    HashMap<String, String>,
+    HashMap<String, String>,
+);
+
 pub fn compute_k8s_deployment_resources(
     deployment: &zos::Deployment,
-) -> Result<
-    (
-        HashMap<String, u64>,
-        HashMap<String, String>,
-        HashMap<String, String>,
-    ),
-    GridError,
-> {
+) -> Result<K8sDeploymentResources, GridError> {
     let mut workload_disk_size: HashMap<String, u64> = HashMap::new();
     let mut workload_computed_ip: HashMap<String, String> = HashMap::new();
     let mut workload_computed_ip6: HashMap<String, String> = HashMap::new();
