@@ -5,11 +5,11 @@ Rust reimplementation of the ThreeFold `tfgrid-sdk-go` `grid-client`.
 The crate currently has two layers:
 
 - Pure Rust reconstruction/state helpers and deployer mocks for fast local tests.
-- A live devnet client that can create TFChain contracts and deploy `network-light` and `vm-light` workloads over RMB.
+- A `GridClient` that can create TFChain contracts and deploy workloads over RMB.
 
-## Current live scope
+## Current `GridClient` Scope
 
-The live client in [src/live.rs](/home/xmonader/wspace/geomind/sdk-grid-rust/src/live.rs) supports:
+The client implementation in [src/live.rs](/home/xmonader/wspace/geomind/sdk-grid-rust/src/live.rs) supports:
 
 - Devnet twin relay setup
 - Node contract creation on TFChain
@@ -20,11 +20,12 @@ The live client in [src/live.rs](/home/xmonader/wspace/geomind/sdk-grid-rust/src
 
 The successful Rust-only deployment path is exercised by [examples/deploy_small_vm.rs](/home/xmonader/wspace/geomind/sdk-grid-rust/examples/deploy_small_vm.rs).
 
-## Live API
+## GridClient API
 
-The live API is centered around these public types:
+The main API is centered around these public types:
 
-- `LiveClient`
+- `GridClient`
+- `GridClientConfig`
 - `VmLightDeployment`
 - `VmLightSpec`
 - `VmDeployment`
@@ -38,7 +39,7 @@ The live API is centered around these public types:
 - `NodeRequirements`
 - `VolumeMountSpec`
 
-`deploy_small_vm()` still exists as a convenience wrapper, but the configurable entry point is:
+`deploy_small_vm()` still exists as a convenience wrapper, but the main configurable entry point is:
 
 ```rust
 client.deploy_vm_light(request).await?;
@@ -65,6 +66,23 @@ let request = VmLightDeployment::builder()
             .build(),
     )
     .build();
+```
+
+Endpoint configuration is explicit and defaults to devnet:
+
+```rust
+use std::time::Duration;
+use tfgrid_sdk_rust::{GridClient, GridClientConfig};
+
+let config = GridClientConfig::builder()
+    .substrate_url("wss://tfchain.dev.grid.tf/ws")
+    .grid_proxy_url("https://gridproxy.dev.grid.tf")
+    .relay_url("wss://relay.dev.grid.tf")
+    .http_timeout(Duration::from_secs(30))
+    .rmb_timeout(Duration::from_secs(30))
+    .build();
+
+let client = GridClient::new(&mnemonic, config).await?;
 ```
 
 With that request you can now control:
@@ -150,7 +168,7 @@ export VM_IP=10.50.2.5
 cargo run --example deploy_vm_on_existing_network
 ```
 
-Enable live-path tracing when debugging relay or workload behavior:
+Enable client tracing when debugging relay or workload behavior:
 
 ```bash
 TFGRID_DEBUG=1 cargo run --example deploy_small_vm
@@ -164,6 +182,6 @@ cargo test
 
 ## Notes
 
-- The live client is intentionally devnet-focused today.
+- `GridClient::devnet()` uses sane devnet defaults, and `GridClient::new()` lets you override substrate, gridproxy, relay, and timeout settings.
 - The example code will try to load a public SSH key from `SSH_KEY_PATH` or common files under `~/.ssh/`.
 - Earlier broken live attempts can leave stray devnet contracts behind. Use the cancellation helpers or clean them up manually.

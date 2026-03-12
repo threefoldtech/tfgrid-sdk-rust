@@ -1,7 +1,7 @@
 use std::{collections::HashMap, env, fs, path::PathBuf};
 
 use tfgrid_sdk_rust::{
-    LiveClient, NetworkLightSpec, NodeRequirements, VmLightDeployment, VmLightSpec, VolumeMountSpec,
+    GridClient, NetworkLightSpec, NodeRequirements, VmLightDeployment, VmLightSpec, VolumeMountSpec,
 };
 
 #[tokio::main]
@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .build();
 
-    let client = LiveClient::devnet(&mnemonic).await?;
+    let client = GridClient::devnet(&mnemonic).await?;
     let outcome = client.deploy_vm_light(request).await?;
     println!("{}", serde_json::to_string_pretty(&outcome)?);
     Ok(())

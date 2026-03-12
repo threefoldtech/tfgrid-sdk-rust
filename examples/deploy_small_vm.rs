@@ -1,12 +1,12 @@
 use std::{env, fs, path::PathBuf};
 
-use tfgrid_sdk_rust::live::LiveClient;
+use tfgrid_sdk_rust::GridClient;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mnemonic = env::var("MNEMONIC").map_err(|_| "MNEMONIC is required")?;
     let ssh_key = load_ssh_key().ok();
-    let client = LiveClient::devnet(&mnemonic).await?;
+    let client = GridClient::devnet(&mnemonic).await?;
     let outcome = client.deploy_small_vm(ssh_key.as_deref()).await?;
     println!("{}", serde_json::to_string_pretty(&outcome)?);
     Ok(())

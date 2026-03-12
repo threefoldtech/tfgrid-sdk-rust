@@ -1,6 +1,6 @@
 use std::{env, fs, path::PathBuf};
 
-use tfgrid_sdk_rust::{LiveClient, VmLightDeployment, VmLightSpec};
+use tfgrid_sdk_rust::{GridClient, VmLightDeployment, VmLightSpec};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let network_name = env::var("NETWORK_NAME").map_err(|_| "NETWORK_NAME is required")?;
     let vm_ip = env::var("VM_IP").map_err(|_| "VM_IP is required")?;
     let ssh_key = load_ssh_key().ok();
-    let client = LiveClient::devnet(&mnemonic).await?;
+    let client = GridClient::devnet(&mnemonic).await?;
     let request = VmLightDeployment::builder()
         .fixed_node(node_id, node_twin_id)
         .existing_network(network_name, vm_ip)

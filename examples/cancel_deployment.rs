@@ -1,6 +1,6 @@
 use std::env;
 
-use tfgrid_sdk_rust::{DeploymentOutcome, LiveClient};
+use tfgrid_sdk_rust::{DeploymentOutcome, GridClient};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "NETWORK_CONTRACT_ID is required")?
         .parse()?;
 
-    let client = LiveClient::devnet(&mnemonic).await?;
+    let client = GridClient::devnet(&mnemonic).await?;
     let outcome = DeploymentOutcome {
         node_id: 0,
         node_twin_id,
