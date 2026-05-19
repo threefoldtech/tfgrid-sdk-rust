@@ -14,8 +14,9 @@ pub use calculator::Calculator;
 pub use error::GridError;
 pub use grid_client::{
     DEV_NETWORK, DeploymentOutcome, ExistingNetworkSpec, FullNetworkSpec, FullNetworkSpecBuilder,
-    FullNetworkTarget, GridClient, GridClientConfig, GridClientConfigBuilder, MAIN_NETWORK,
-    NetworkLightSpec, NetworkLightSpecBuilder, NetworkTarget, NodePlacement, NodeRequirements,
+    FullNetworkTarget, GatewayDeploymentOutcome, GatewayFqdnDeployment, GatewayNameDeployment,
+    GridClient, GridClientConfig, GridClientConfigBuilder, MAIN_NETWORK, NetworkLightSpec,
+    NetworkLightSpecBuilder, NetworkTarget, NodePlacement, NodeRequirements,
     NodeRequirementsBuilder, QA_NETWORK, TEST_NETWORK, VmDeployment, VmDeploymentBuilder,
     VmLightDeployment, VmLightDeploymentBuilder, VmLightMount, VmLightSpec, VmLightSpecBuilder,
     VmSpec, VmSpecBuilder, VolumeMountSpec,
