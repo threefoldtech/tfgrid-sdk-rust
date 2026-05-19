@@ -741,8 +741,7 @@ impl GridClient {
             request.network.as_deref(),
         );
         let metadata = deployment_metadata(&request.name, "gateway-name-proxy", &request.name);
-        let mut deployment =
-            DeployDeployment::new(self.identity.twin_id, metadata, vec![workload]);
+        let mut deployment = DeployDeployment::new(self.identity.twin_id, metadata, vec![workload]);
         sign_deployment(&mut deployment, self.identity.twin_id, &self.signer)?;
         let hash = deployment_hash_hex(&deployment)?;
         debug_dump("gateway-name", &deployment, &hash);
@@ -757,9 +756,7 @@ impl GridClient {
             0,
         )
         .await
-        .map_err(|err| {
-            GridError::backend(format!("create gateway-name node contract: {err}"))
-        })?;
+        .map_err(|err| GridError::backend(format!("create gateway-name node contract: {err}")))?;
         let contract_id = self.wait_for_contract(request.node_id, &hash).await?;
         deployment.contract_id = contract_id;
 
@@ -817,8 +814,7 @@ impl GridClient {
             request.network.as_deref(),
         );
         let metadata = deployment_metadata(&request.name, "gateway-fqdn-proxy", &request.name);
-        let mut deployment =
-            DeployDeployment::new(self.identity.twin_id, metadata, vec![workload]);
+        let mut deployment = DeployDeployment::new(self.identity.twin_id, metadata, vec![workload]);
         sign_deployment(&mut deployment, self.identity.twin_id, &self.signer)?;
         let hash = deployment_hash_hex(&deployment)?;
         debug_dump("gateway-fqdn", &deployment, &hash);
@@ -832,9 +828,7 @@ impl GridClient {
             0,
         )
         .await
-        .map_err(|err| {
-            GridError::backend(format!("create gateway-fqdn node contract: {err}"))
-        })?;
+        .map_err(|err| GridError::backend(format!("create gateway-fqdn node contract: {err}")))?;
         let contract_id = self.wait_for_contract(request.node_id, &hash).await?;
         deployment.contract_id = contract_id;
 
