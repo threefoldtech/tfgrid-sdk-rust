@@ -640,3 +640,66 @@ impl VmSpecBuilder {
         self.spec
     }
 }
+
+// ── Gateway deployment requests / outcome ────────────────────────────────────
+
+/// Request describing a `gateway-name-proxy` deployment.
+///
+/// `name` is the subdomain label registered as an on-chain "name contract";
+/// the gateway node appends its own zone and returns the resulting public
+/// `fqdn` in [`GatewayDeploymentOutcome::fqdn`].
+#[derive(Debug, Clone)]
+pub struct GatewayNameDeployment {
+    /// Target gateway node (must support gateway workloads).
+    pub node_id: u32,
+    /// Twin id of the gateway node — needed for RMB.
+    pub node_twin_id: u32,
+    /// Subdomain label to register (e.g. `"myapp"` → `myapp.<gateway-zone>`).
+    pub name: String,
+    /// HTTP(S) backend URLs the gateway will proxy to.
+    pub backends: Vec<String>,
+    /// When true, TLS terminates at the backend (the gateway just forwards).
+    pub tls_passthrough: bool,
+    /// Optional Mycelium / WireGuard network name to dial backends through.
+    pub network: Option<String>,
+}
+
+/// Request describing a `gateway-fqdn-proxy` deployment.
+///
+/// `fqdn` must be a domain you already own and have pointed at the gateway
+/// node's public IP — the gateway terminates TLS for it.
+#[derive(Debug, Clone)]
+pub struct GatewayFqdnDeployment {
+    /// Target gateway node.
+    pub node_id: u32,
+    /// Twin id of the gateway node.
+    pub node_twin_id: u32,
+    /// Workload name (used as the on-node identifier).
+    pub name: String,
+    /// Fully-qualified domain the gateway will serve.
+    pub fqdn: String,
+    /// HTTP(S) backend URLs the gateway will proxy to.
+    pub backends: Vec<String>,
+    /// When true, TLS terminates at the backend (the gateway just forwards).
+    pub tls_passthrough: bool,
+    /// Optional Mycelium / WireGuard network name to dial backends through.
+    pub network: Option<String>,
+}
+
+/// Result of a successful gateway deployment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayDeploymentOutcome {
+    pub node_id: u32,
+    pub node_twin_id: u32,
+    /// Workload name on the node.
+    pub name: String,
+    /// Public FQDN serving traffic. For `name-proxy` this is filled from the
+    /// workload result (zone appended by the gateway); for `fqdn-proxy` it
+    /// matches the requested fqdn.
+    pub fqdn: String,
+    /// Substrate contract for the deployment workload.
+    pub contract_id: u64,
+    /// Substrate contract for the on-chain name registration. Zero for
+    /// `fqdn-proxy` (no name registration step).
+    pub name_contract_id: u64,
+}

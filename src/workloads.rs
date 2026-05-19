@@ -322,6 +322,10 @@ pub struct Deployment {
     pub vms_light: Vec<VMLight>,
     pub qsfs: Vec<QSFS>,
     pub volumes: Vec<Volume>,
+    #[serde(default)]
+    pub gateway_name_proxies: Vec<GatewayNameProxy>,
+    #[serde(default)]
+    pub gateway_fqdn_proxies: Vec<GatewayFQDNProxy>,
     pub node_deployment_id: HashMap<u32, u64>,
     pub contract_id: u64,
     pub ip_range: String,
@@ -354,6 +358,8 @@ impl Deployment {
             vms_light,
             qsfs,
             volumes,
+            gateway_name_proxies: Vec::new(),
+            gateway_fqdn_proxies: Vec::new(),
             node_deployment_id: HashMap::new(),
             contract_id: 0,
             ip_range: String::new(),
@@ -387,6 +393,12 @@ impl Deployment {
         }
         for v in &self.volumes {
             v.validate()?;
+        }
+        for g in &self.gateway_name_proxies {
+            g.validate()?;
+        }
+        for g in &self.gateway_fqdn_proxies {
+            g.validate()?;
         }
         Ok(())
     }
@@ -424,6 +436,8 @@ impl Deployment {
                     .map(|q| q.zos_workload())
                     .collect::<Result<Vec<_>, _>>()?,
             )
+            .chain(self.gateway_name_proxies.iter().map(GatewayNameProxy::zos_workload))
+            .chain(self.gateway_fqdn_proxies.iter().map(GatewayFQDNProxy::zos_workload))
             .collect();
 
         Ok(zos::Deployment {
@@ -893,6 +907,152 @@ impl GatewayFQDNProxy {
             contract_id: 0,
             node_deployment_id: HashMap::new(),
         })
+    }
+}
+
+// ── Gateway forward conversion (struct → zos::Workload) ──────────────────────
+//
+// `from_workload` parses an existing on-chain workload back into a typed
+// struct; `zos_workload` is its inverse — used at deploy time to construct
+// the workload that goes into a deployment.
+
+impl GatewayNameProxy {
+    /// Construct a new gateway-name-proxy spec.
+    ///
+    /// `name` is the unregistered subdomain label (e.g. `"myapp"`); the
+    /// gateway node appends its own zone to produce the public FQDN (returned
+    /// in the workload result data).
+    pub fn new(
+        node_id: u32,
+        name: impl Into<String>,
+        backends: Vec<String>,
+        tls_passthrough: bool,
+    ) -> Self {
+        Self {
+            node_id,
+            name: name.into(),
+            backends,
+            tls_passthrough,
+            network: String::new(),
+            description: String::new(),
+            solution_type: String::new(),
+            node_deployment_id: HashMap::new(),
+            fqdn: String::new(),
+            name_contract_id: 0,
+            contract_id: 0,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), GridError> {
+        if self.node_id == 0 {
+            return Err(GridError::validation("gateway node_id must be >0"));
+        }
+        if self.name.trim().is_empty() {
+            return Err(GridError::validation("gateway name must not be empty"));
+        }
+        if self.backends.is_empty() {
+            return Err(GridError::validation(
+                "gateway must have at least one backend",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Build the on-chain workload representation for this gateway spec.
+    pub fn zos_workload(&self) -> zos::Workload {
+        let mut data = serde_json::json!({
+            "name": self.name,
+            "tls_passthrough": self.tls_passthrough,
+            "backends": self.backends,
+        });
+        if !self.network.is_empty() {
+            data["network"] = serde_json::Value::String(self.network.clone());
+        }
+        let description = if self.description.is_empty() {
+            "gateway-name-proxy".to_string()
+        } else {
+            self.description.clone()
+        };
+        zos::Workload {
+            version: 0,
+            name: self.name.clone(),
+            workload_type: zos::GATEWAY_NAME_PROXY_TYPE.to_string(),
+            data,
+            metadata: String::new(),
+            description,
+            result: zos::ResultData::default(),
+        }
+    }
+}
+
+impl GatewayFQDNProxy {
+    /// Construct a new gateway-fqdn-proxy spec.
+    ///
+    /// `name` is the workload name; `fqdn` is the public domain the user
+    /// already owns and has pointed at the gateway node.
+    pub fn new(
+        node_id: u32,
+        name: impl Into<String>,
+        fqdn: impl Into<String>,
+        backends: Vec<String>,
+        tls_passthrough: bool,
+    ) -> Self {
+        Self {
+            node_id,
+            backends,
+            fqdn: fqdn.into(),
+            name: name.into(),
+            tls_passthrough,
+            network: String::new(),
+            description: String::new(),
+            solution_type: String::new(),
+            contract_id: 0,
+            node_deployment_id: HashMap::new(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), GridError> {
+        if self.node_id == 0 {
+            return Err(GridError::validation("gateway node_id must be >0"));
+        }
+        if self.name.trim().is_empty() {
+            return Err(GridError::validation("gateway name must not be empty"));
+        }
+        if self.fqdn.trim().is_empty() {
+            return Err(GridError::validation("gateway fqdn must not be empty"));
+        }
+        if self.backends.is_empty() {
+            return Err(GridError::validation(
+                "gateway must have at least one backend",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Build the on-chain workload representation for this gateway spec.
+    pub fn zos_workload(&self) -> zos::Workload {
+        let mut data = serde_json::json!({
+            "fqdn": self.fqdn,
+            "tls_passthrough": self.tls_passthrough,
+            "backends": self.backends,
+        });
+        if !self.network.is_empty() {
+            data["network"] = serde_json::Value::String(self.network.clone());
+        }
+        let description = if self.description.is_empty() {
+            "gateway-fqdn-proxy".to_string()
+        } else {
+            self.description.clone()
+        };
+        zos::Workload {
+            version: 0,
+            name: self.name.clone(),
+            workload_type: zos::GATEWAY_FQDN_PROXY_TYPE.to_string(),
+            data,
+            metadata: String::new(),
+            description,
+            result: zos::ResultData::default(),
+        }
     }
 }
 
@@ -1787,5 +1947,69 @@ mod tests {
         assert_eq!(vm.flist_checksum, "checksum-vm2");
         assert_eq!(vm.mycelium_ip, "mycelium-vm2");
         assert_eq!(vm.console_url, "https://console-2.example");
+    }
+
+    #[test]
+    fn gateway_name_proxy_roundtrips_through_workload() {
+        let mut spec = GatewayNameProxy::new(
+            42,
+            "myapp",
+            vec!["http://10.0.0.1:8080".to_string()],
+            true,
+        );
+        spec.network = "mynet".to_string();
+        let workload = spec.zos_workload();
+        assert_eq!(workload.workload_type, zos::GATEWAY_NAME_PROXY_TYPE);
+        assert_eq!(workload.name, "myapp");
+        assert_eq!(workload.data["name"], "myapp");
+        assert_eq!(workload.data["tls_passthrough"], true);
+        assert_eq!(workload.data["backends"][0], "http://10.0.0.1:8080");
+        assert_eq!(workload.data["network"], "mynet");
+
+        let parsed = GatewayNameProxy::from_workload(&workload).expect("parse");
+        assert_eq!(parsed.name, "myapp");
+        assert_eq!(parsed.backends, spec.backends);
+        assert!(parsed.tls_passthrough);
+        assert_eq!(parsed.network, "mynet");
+    }
+
+    #[test]
+    fn gateway_fqdn_proxy_roundtrips_through_workload() {
+        let spec = GatewayFQDNProxy::new(
+            7,
+            "myapp",
+            "myapp.example.com",
+            vec!["https://10.0.0.1:443".to_string()],
+            false,
+        );
+        let workload = spec.zos_workload();
+        assert_eq!(workload.workload_type, zos::GATEWAY_FQDN_PROXY_TYPE);
+        assert_eq!(workload.name, "myapp");
+        assert_eq!(workload.data["fqdn"], "myapp.example.com");
+        assert_eq!(workload.data["tls_passthrough"], false);
+        assert_eq!(workload.data["backends"][0], "https://10.0.0.1:443");
+        // network is empty → omitted from JSON
+        assert!(workload.data.get("network").is_none());
+
+        let parsed = GatewayFQDNProxy::from_workload(&workload).expect("parse");
+        assert_eq!(parsed.name, "myapp");
+        assert_eq!(parsed.fqdn, "myapp.example.com");
+        assert_eq!(parsed.backends, spec.backends);
+        assert!(!parsed.tls_passthrough);
+        assert!(parsed.network.is_empty());
+    }
+
+    #[test]
+    fn gateway_name_proxy_validates_required_fields() {
+        let mut spec = GatewayNameProxy::new(1, "ok", vec!["http://x".to_string()], false);
+        assert!(spec.validate().is_ok());
+        spec.node_id = 0;
+        assert!(spec.validate().is_err());
+
+        let mut spec = GatewayNameProxy::new(1, "", vec!["http://x".to_string()], false);
+        assert!(spec.validate().is_err());
+        spec.name = "ok".to_string();
+        spec.backends.clear();
+        assert!(spec.validate().is_err());
     }
 }
