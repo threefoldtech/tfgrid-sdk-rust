@@ -436,8 +436,16 @@ impl Deployment {
                     .map(|q| q.zos_workload())
                     .collect::<Result<Vec<_>, _>>()?,
             )
-            .chain(self.gateway_name_proxies.iter().map(GatewayNameProxy::zos_workload))
-            .chain(self.gateway_fqdn_proxies.iter().map(GatewayFQDNProxy::zos_workload))
+            .chain(
+                self.gateway_name_proxies
+                    .iter()
+                    .map(GatewayNameProxy::zos_workload),
+            )
+            .chain(
+                self.gateway_fqdn_proxies
+                    .iter()
+                    .map(GatewayFQDNProxy::zos_workload),
+            )
             .collect();
 
         Ok(zos::Deployment {
@@ -1951,12 +1959,8 @@ mod tests {
 
     #[test]
     fn gateway_name_proxy_roundtrips_through_workload() {
-        let mut spec = GatewayNameProxy::new(
-            42,
-            "myapp",
-            vec!["http://10.0.0.1:8080".to_string()],
-            true,
-        );
+        let mut spec =
+            GatewayNameProxy::new(42, "myapp", vec!["http://10.0.0.1:8080".to_string()], true);
         spec.network = "mynet".to_string();
         let workload = spec.zos_workload();
         assert_eq!(workload.workload_type, zos::GATEWAY_NAME_PROXY_TYPE);
