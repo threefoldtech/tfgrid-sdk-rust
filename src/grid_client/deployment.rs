@@ -704,6 +704,28 @@ fn workload_challenge(out: &mut String, workload: &DeployWorkload) -> Result<(),
                 out.push_str(&gpu);
             }
         }
+        zos::GATEWAY_NAME_PROXY_TYPE => {
+            let data: GatewayNameProxyData =
+                serde_json::from_value(workload.data.clone()).map_err(GridError::from)?;
+            out.push_str(&data.name);
+            for backend in &data.backends {
+                out.push_str(backend);
+            }
+            write!(out, "{}", data.tls_passthrough)
+                .map_err(|err| GridError::backend(err.to_string()))?;
+            out.push_str(&data.network);
+        }
+        zos::GATEWAY_FQDN_PROXY_TYPE => {
+            let data: GatewayFqdnProxyData =
+                serde_json::from_value(workload.data.clone()).map_err(GridError::from)?;
+            out.push_str(&data.fqdn);
+            for backend in &data.backends {
+                out.push_str(backend);
+            }
+            write!(out, "{}", data.tls_passthrough)
+                .map_err(|err| GridError::backend(err.to_string()))?;
+            out.push_str(&data.network);
+        }
         other => {
             return Err(GridError::validation(format!(
                 "unsupported live workload type {other}"
