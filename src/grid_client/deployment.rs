@@ -705,26 +705,30 @@ fn workload_challenge(out: &mut String, workload: &DeployWorkload) -> Result<(),
             }
         }
         zos::GATEWAY_NAME_PROXY_TYPE => {
+            // Matches the canonical Go ZOS implementation in
+            // pkg/gridtypes/zos/gw_name.go: Name → TLSPassthrough → Backends.
+            // `network` is NOT included in the challenge — ZOS rejects the
+            // signature otherwise.
             let data: GatewayNameProxyData =
                 serde_json::from_value(workload.data.clone()).map_err(GridError::from)?;
             out.push_str(&data.name);
+            write!(out, "{}", data.tls_passthrough)
+                .map_err(|err| GridError::backend(err.to_string()))?;
             for backend in &data.backends {
                 out.push_str(backend);
             }
-            write!(out, "{}", data.tls_passthrough)
-                .map_err(|err| GridError::backend(err.to_string()))?;
-            out.push_str(&data.network);
         }
         zos::GATEWAY_FQDN_PROXY_TYPE => {
+            // Matches the canonical Go ZOS implementation in
+            // pkg/gridtypes/zos/gw_fqdn.go: FQDN → TLSPassthrough → Backends.
             let data: GatewayFqdnProxyData =
                 serde_json::from_value(workload.data.clone()).map_err(GridError::from)?;
             out.push_str(&data.fqdn);
+            write!(out, "{}", data.tls_passthrough)
+                .map_err(|err| GridError::backend(err.to_string()))?;
             for backend in &data.backends {
                 out.push_str(backend);
             }
-            write!(out, "{}", data.tls_passthrough)
-                .map_err(|err| GridError::backend(err.to_string()))?;
-            out.push_str(&data.network);
         }
         other => {
             return Err(GridError::validation(format!(
