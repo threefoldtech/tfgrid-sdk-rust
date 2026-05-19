@@ -44,16 +44,17 @@ use crate::{error::GridError, workloads, zos};
 mod deployment;
 mod types;
 pub(crate) use deployment::{
-    DeployDeployment, build_network, build_network_light, build_vm, build_vm_light,
-    deployment_hash_hex, public_ip_count, sign_deployment, validate_vm_light_request,
-    validate_vm_request,
+    DeployDeployment, build_gateway_fqdn_proxy, build_gateway_name_proxy, build_network,
+    build_network_light, build_vm, build_vm_light, deployment_hash_hex, public_ip_count,
+    sign_deployment, validate_vm_light_request, validate_vm_request,
 };
 pub use types::{
     DeploymentOutcome, ExistingNetworkSpec, FullNetworkSpec, FullNetworkSpecBuilder,
-    FullNetworkTarget, NetworkLightSpec, NetworkLightSpecBuilder, NetworkTarget, NodePlacement,
-    NodeRequirements, NodeRequirementsBuilder, VmDeployment, VmDeploymentBuilder,
-    VmLightDeployment, VmLightDeploymentBuilder, VmLightMount, VmLightSpec, VmLightSpecBuilder,
-    VmSpec, VmSpecBuilder, VolumeMountSpec,
+    FullNetworkTarget, GatewayDeploymentOutcome, GatewayFqdnDeployment, GatewayNameDeployment,
+    NetworkLightSpec, NetworkLightSpecBuilder, NetworkTarget, NodePlacement, NodeRequirements,
+    NodeRequirementsBuilder, VmDeployment, VmDeploymentBuilder, VmLightDeployment,
+    VmLightDeploymentBuilder, VmLightMount, VmLightSpec, VmLightSpecBuilder, VmSpec, VmSpecBuilder,
+    VolumeMountSpec,
 };
 
 const RMB_SCHEMA: &str = "application/json";
@@ -712,6 +713,171 @@ impl GridClient {
         .await
     }
 
+    pub async fn deploy_gateway_name(
+        &self,
+        request: GatewayNameDeployment,
+    ) -> Result<GatewayDeploymentOutcome, GridError> {
+        validate_gateway_name_request(&request)?;
+        self.ensure_twin_relay().await?;
+        trace_step(format!(
+            "deploy gateway-name-proxy '{}' on node {} (twin {})",
+            request.name, request.node_id, request.node_twin_id
+        ));
+
+        // 1. Register the subdomain on-chain.
+        submit_create_name_contract(&self.chain, &self.signer, &request.name)
+            .await
+            .map_err(|err| {
+                GridError::backend(format!("create name contract '{}': {err}", request.name))
+            })?;
+        let name_contract_id = self.wait_for_name_contract(&request.name).await?;
+        trace_step(format!("name contract id {name_contract_id}"));
+
+        // 2. Build the deployment workload + sign + hash.
+        let workload = build_gateway_name_proxy(
+            &request.name,
+            &request.backends,
+            request.tls_passthrough,
+            request.network.as_deref(),
+        );
+        let metadata = deployment_metadata(&request.name, "gateway-name-proxy", &request.name);
+        let mut deployment =
+            DeployDeployment::new(self.identity.twin_id, metadata, vec![workload]);
+        sign_deployment(&mut deployment, self.identity.twin_id, &self.signer)?;
+        let hash = deployment_hash_hex(&deployment)?;
+        debug_dump("gateway-name", &deployment, &hash);
+
+        // 3. Create the node contract (anchors the deployment).
+        submit_create_node_contract(
+            &self.chain,
+            &self.signer,
+            request.node_id,
+            &deployment.metadata,
+            &hash,
+            0,
+        )
+        .await
+        .map_err(|err| {
+            GridError::backend(format!("create gateway-name node contract: {err}"))
+        })?;
+        let contract_id = self.wait_for_contract(request.node_id, &hash).await?;
+        deployment.contract_id = contract_id;
+
+        // 4. Push to the gateway node over RMB and wait for the workload to come up.
+        self.deploy_and_confirm(request.node_twin_id, &deployment)
+            .await
+            .map_err(|err| GridError::backend(format!("deploy gateway-name over RMB: {err}")))?;
+        self.wait_for_workloads(request.node_twin_id, contract_id)
+            .await
+            .map_err(|err| GridError::backend(format!("wait gateway-name workloads: {err}")))?;
+
+        // 5. Read back the workload to extract the assigned FQDN.
+        let state = self
+            .rmb_call::<_, serde_json::Value>(
+                request.node_twin_id,
+                "zos.deployment.get",
+                &json!({ "contract_id": contract_id }),
+                None,
+            )
+            .await
+            .map_err(|err| {
+                GridError::backend(format!("load gateway-name deployment from node: {err}"))
+            })?;
+        let workloads = extract_workloads(state)?;
+        let fqdn = gateway_fqdn_from_workloads(&workloads, &request.name);
+
+        Ok(GatewayDeploymentOutcome {
+            node_id: request.node_id,
+            node_twin_id: request.node_twin_id,
+            name: request.name,
+            fqdn,
+            contract_id,
+            name_contract_id,
+        })
+    }
+
+    pub async fn deploy_gateway_fqdn(
+        &self,
+        request: GatewayFqdnDeployment,
+    ) -> Result<GatewayDeploymentOutcome, GridError> {
+        validate_gateway_fqdn_request(&request)?;
+        self.ensure_twin_relay().await?;
+        trace_step(format!(
+            "deploy gateway-fqdn-proxy '{}' (fqdn {}) on node {} (twin {})",
+            request.name, request.fqdn, request.node_id, request.node_twin_id
+        ));
+
+        // Build deployment workload + sign + hash. No name contract for FQDN
+        // gateways — the operator owns the DNS record themselves.
+        let workload = build_gateway_fqdn_proxy(
+            &request.name,
+            &request.fqdn,
+            &request.backends,
+            request.tls_passthrough,
+            request.network.as_deref(),
+        );
+        let metadata = deployment_metadata(&request.name, "gateway-fqdn-proxy", &request.name);
+        let mut deployment =
+            DeployDeployment::new(self.identity.twin_id, metadata, vec![workload]);
+        sign_deployment(&mut deployment, self.identity.twin_id, &self.signer)?;
+        let hash = deployment_hash_hex(&deployment)?;
+        debug_dump("gateway-fqdn", &deployment, &hash);
+
+        submit_create_node_contract(
+            &self.chain,
+            &self.signer,
+            request.node_id,
+            &deployment.metadata,
+            &hash,
+            0,
+        )
+        .await
+        .map_err(|err| {
+            GridError::backend(format!("create gateway-fqdn node contract: {err}"))
+        })?;
+        let contract_id = self.wait_for_contract(request.node_id, &hash).await?;
+        deployment.contract_id = contract_id;
+
+        self.deploy_and_confirm(request.node_twin_id, &deployment)
+            .await
+            .map_err(|err| GridError::backend(format!("deploy gateway-fqdn over RMB: {err}")))?;
+        self.wait_for_workloads(request.node_twin_id, contract_id)
+            .await
+            .map_err(|err| GridError::backend(format!("wait gateway-fqdn workloads: {err}")))?;
+
+        Ok(GatewayDeploymentOutcome {
+            node_id: request.node_id,
+            node_twin_id: request.node_twin_id,
+            name: request.name,
+            fqdn: request.fqdn,
+            contract_id,
+            name_contract_id: 0,
+        })
+    }
+
+    /// Cancel both the deployment contract and (for name proxies) the name
+    /// contract associated with a previous gateway deploy.
+    pub async fn cancel_gateway(
+        &self,
+        outcome: &GatewayDeploymentOutcome,
+    ) -> Result<(), GridError> {
+        if outcome.contract_id != 0 {
+            let _ = self
+                .rmb_call::<_, serde_json::Value>(
+                    outcome.node_twin_id,
+                    "zos.deployment.delete",
+                    &json!({ "contract_id": outcome.contract_id }),
+                    None,
+                )
+                .await;
+            self.cancel_contract(outcome.contract_id).await?;
+        }
+        if outcome.name_contract_id != 0 {
+            self.cancel_contract(outcome.name_contract_id).await?;
+        }
+        Ok(())
+    }
+
     pub fn debug_rmb_token(&self) -> Result<String, GridError> {
         jwt_token(&self.signer, self.identity.twin_id, None, 60)
     }
@@ -1209,6 +1375,45 @@ impl GridClient {
             if Instant::now() >= deadline {
                 return Err(GridError::backend(format!(
                     "timed out waiting for contract {deployment_hash}"
+                )));
+            }
+            sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    /// Poll grid_proxy for a freshly-created name contract owned by this
+    /// twin. We don't get the contract id back from the extrinsic submission,
+    /// so the proxy is the cheapest place to look it up.
+    async fn wait_for_name_contract(&self, name: &str) -> Result<u64, GridError> {
+        trace_step(format!(
+            "waiting for name contract '{name}' owned by twin {}",
+            self.identity.twin_id
+        ));
+        let deadline = Instant::now() + Duration::from_secs(45);
+        loop {
+            let response = self
+                .http
+                .get(format!("{}/contracts", self.grid_proxy_url))
+                .query(&[
+                    ("twin_id", self.identity.twin_id.to_string()),
+                    ("type", "name".to_string()),
+                    ("state", "Created".to_string()),
+                    ("name", name.to_string()),
+                ])
+                .send()
+                .await
+                .map_err(|err| GridError::backend(err.to_string()))?;
+            if response.status() == StatusCode::OK {
+                let contracts: Vec<ProxyContract> =
+                    parse_json_response(response, "grid proxy /contracts (name)").await?;
+                if let Some(contract) = contracts.into_iter().next() {
+                    trace_step(format!("found name contract {}", contract.contract_id));
+                    return Ok(contract.contract_id);
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(GridError::backend(format!(
+                    "timed out waiting for name contract '{name}'"
                 )));
             }
             sleep(Duration::from_secs(1)).await;
@@ -1761,6 +1966,79 @@ fn extract_ip_value(value: Option<&serde_json::Value>) -> Option<String> {
             .map(ToOwned::to_owned),
         _ => None,
     }
+}
+
+fn validate_gateway_name_request(req: &GatewayNameDeployment) -> Result<(), GridError> {
+    if req.node_id == 0 {
+        return Err(GridError::validation("gateway node_id must be >0"));
+    }
+    if req.node_twin_id == 0 {
+        return Err(GridError::validation("gateway node_twin_id must be >0"));
+    }
+    if req.name.trim().is_empty() {
+        return Err(GridError::validation("gateway name must not be empty"));
+    }
+    if req.backends.is_empty() {
+        return Err(GridError::validation(
+            "gateway must have at least one backend",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_gateway_fqdn_request(req: &GatewayFqdnDeployment) -> Result<(), GridError> {
+    if req.node_id == 0 {
+        return Err(GridError::validation("gateway node_id must be >0"));
+    }
+    if req.node_twin_id == 0 {
+        return Err(GridError::validation("gateway node_twin_id must be >0"));
+    }
+    if req.name.trim().is_empty() {
+        return Err(GridError::validation("gateway name must not be empty"));
+    }
+    if req.fqdn.trim().is_empty() {
+        return Err(GridError::validation("gateway fqdn must not be empty"));
+    }
+    if req.backends.is_empty() {
+        return Err(GridError::validation(
+            "gateway must have at least one backend",
+        ));
+    }
+    Ok(())
+}
+
+fn gateway_fqdn_from_workloads(workloads: &[zos::Workload], name: &str) -> String {
+    workloads
+        .iter()
+        .find(|workload| workload.name == name)
+        .map(|workload| {
+            let result = &workload.result.data;
+            result
+                .get("fqdn")
+                .or_else(|| result.get("FQDN"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+async fn submit_create_name_contract(
+    chain: &OnlineClient<PolkadotConfig>,
+    signer: &Keypair,
+    name: &str,
+) -> Result<(), GridError> {
+    let tx = dynamic::tx(
+        "SmartContractModule",
+        "create_name_contract",
+        vec![Value::from_bytes(name.as_bytes())],
+    );
+    let progress = chain
+        .tx()
+        .sign_and_submit_then_watch_default(&tx, signer)
+        .await
+        .map_err(|err| GridError::backend(err.to_string()))?;
+    wait_for_finalized(progress).await
 }
 
 async fn submit_create_node_contract(

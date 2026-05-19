@@ -720,6 +720,71 @@ pub(crate) fn public_ip_count(workloads: &[DeployWorkload]) -> u32 {
         .count() as u32
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GatewayNameProxyData {
+    name: String,
+    tls_passthrough: bool,
+    backends: Vec<String>,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    network: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GatewayFqdnProxyData {
+    fqdn: String,
+    tls_passthrough: bool,
+    backends: Vec<String>,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    network: String,
+}
+
+pub(crate) fn build_gateway_name_proxy(
+    name: &str,
+    backends: &[String],
+    tls_passthrough: bool,
+    network: Option<&str>,
+) -> DeployWorkload {
+    DeployWorkload {
+        version: 0,
+        name: name.to_string(),
+        workload_type: zos::GATEWAY_NAME_PROXY_TYPE.to_string(),
+        data: serde_json::to_value(GatewayNameProxyData {
+            name: name.to_string(),
+            tls_passthrough,
+            backends: backends.to_vec(),
+            network: network.unwrap_or("").to_string(),
+        })
+        .unwrap_or_default(),
+        metadata: String::new(),
+        description: "gateway-name-proxy".to_string(),
+        result: empty_result_data(),
+    }
+}
+
+pub(crate) fn build_gateway_fqdn_proxy(
+    name: &str,
+    fqdn: &str,
+    backends: &[String],
+    tls_passthrough: bool,
+    network: Option<&str>,
+) -> DeployWorkload {
+    DeployWorkload {
+        version: 0,
+        name: name.to_string(),
+        workload_type: zos::GATEWAY_FQDN_PROXY_TYPE.to_string(),
+        data: serde_json::to_value(GatewayFqdnProxyData {
+            fqdn: fqdn.to_string(),
+            tls_passthrough,
+            backends: backends.to_vec(),
+            network: network.unwrap_or("").to_string(),
+        })
+        .unwrap_or_default(),
+        metadata: String::new(),
+        description: "gateway-fqdn-proxy".to_string(),
+        result: empty_result_data(),
+    }
+}
+
 pub(crate) fn empty_result_data() -> zos::ResultData {
     zos::ResultData {
         created: 0,
