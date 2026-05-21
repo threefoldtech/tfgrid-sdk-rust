@@ -889,6 +889,20 @@ impl GridClient {
             .map_err(|err| GridError::backend(format!("cancel contract {contract_id}: {err}")))
     }
 
+    /// Create a rent contract for a whole dedicated node. Mirrors the Go SDK's
+    /// `CreateRentContract`; `solution_provider_id` is normally `None`.
+    pub async fn create_rent_contract(
+        &self,
+        node_id: u32,
+        solution_provider_id: Option<u64>,
+    ) -> Result<(), GridError> {
+        submit_create_rent_contract(&self.chain, &self.signer, node_id, solution_provider_id)
+            .await
+            .map_err(|err| {
+                GridError::backend(format!("create rent contract for node {node_id}: {err}"))
+            })
+    }
+
     pub async fn cancel_deployment_outcome(
         &self,
         outcome: &DeploymentOutcome,
@@ -2026,6 +2040,31 @@ async fn submit_create_name_contract(
         "SmartContractModule",
         "create_name_contract",
         vec![Value::from_bytes(name.as_bytes())],
+    );
+    let progress = chain
+        .tx()
+        .sign_and_submit_then_watch_default(&tx, signer)
+        .await
+        .map_err(|err| GridError::backend(err.to_string()))?;
+    wait_for_finalized(progress).await
+}
+
+async fn submit_create_rent_contract(
+    chain: &OnlineClient<PolkadotConfig>,
+    signer: &Keypair,
+    node_id: u32,
+    solution_provider_id: Option<u64>,
+) -> Result<(), GridError> {
+    // TFChain: SmartContractModule.create_rent_contract(node_id, solution_provider_id)
+    // with solution_provider_id an Option<u64> (None for a plain rental).
+    let provider = match solution_provider_id {
+        Some(id) => Value::unnamed_variant("Some", [Value::u128(u128::from(id))]),
+        None => Value::unnamed_variant("None", []),
+    };
+    let tx = dynamic::tx(
+        "SmartContractModule",
+        "create_rent_contract",
+        vec![Value::u128(u128::from(node_id)), provider],
     );
     let progress = chain
         .tx()
