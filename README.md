@@ -1,4 +1,4 @@
-# tfgrid-sdk-rust
+# ZOS SDK Rust
 
 Rust client library for building high-performance tools and services that interact with the ThreeFold Grid. It provides async Rust APIs for deployment management, chain interaction, and peer-to-peer messaging over the grid's Reliable Message Bus (RMB).
 
