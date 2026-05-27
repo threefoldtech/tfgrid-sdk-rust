@@ -264,3 +264,8 @@ cargo check --examples
 - The example code will try to load a public SSH key from `SSH_KEY_PATH` or common files under `~/.ssh/`.
 - Live deployment has been verified on devnet in this repository. Other named presets are first-class in the API, but have not all been smoke-tested here yet.
 - Earlier broken live attempts can leave stray contracts behind. Use the cancellation helpers or clean them up manually.
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+Copyright (c) TFTech NV.
