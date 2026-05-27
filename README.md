@@ -7,7 +7,7 @@ Rust client library for building high-performance tools and services that intera
 This repository contains a native Rust SDK for interacting with the ThreeFold Grid. The crate is organized in two layers:
 
 - Pure Rust reconstruction/state helpers and deployer mocks for fast local tests.
-- A `GridClient` that can create TFChain contracts and deploy workloads over RMB.
+- A `GridClient` that can create Ledger Chain contracts and deploy workloads over RMB.
 
 The SDK is intended as a foundation for Rust-based grid applications, system utilities, and any tooling that requires direct, high-performance interaction with grid nodes and on-chain state.
 
@@ -21,7 +21,7 @@ The SDK is intended as a foundation for Rust-based grid applications, system uti
 
 ## Role in the stack
 
-The SDK operates at the client layer, bridging Rust applications to the grid's on-chain and node-level APIs. It connects to TFChain via substrate websockets for contract creation and twin lookup, to the grid proxy for node discovery, and to the RMB relay for encrypted command and control traffic to individual nodes. It is used by automation tools, system utilities, and any Rust service that needs to provision or manage grid workloads programmatically.
+The SDK operates at the client layer, bridging Rust applications to the grid's on-chain and node-level APIs. It connects to Ledger Chain via substrate websockets for contract creation and twin lookup, to the grid proxy for node discovery, and to the RMB relay for encrypted command and control traffic to individual nodes. It is used by automation tools, system utilities, and any Rust service that needs to provision or manage grid workloads programmatically.
 
 ## Relation to ThreeFold
 
