@@ -1,27 +1,35 @@
-# `sdk-grid-rust`
+# tfgrid-sdk-rust
 
-Rust reimplementation of the ThreeFold `tfgrid-sdk-go` `grid-client`.
+Rust client library for building high-performance tools and services that interact with the ThreeFold Grid. It provides async Rust APIs for deployment management, chain interaction, and peer-to-peer messaging over the grid's Reliable Message Bus (RMB).
 
-The crate has two layers:
+## What this is
+
+This repository contains a native Rust SDK for interacting with the ThreeFold Grid. The crate is organized in two layers:
 
 - Pure Rust reconstruction/state helpers and deployer mocks for fast local tests.
 - A `GridClient` that can create TFChain contracts and deploy workloads over RMB.
 
-## Scope
+The SDK is intended as a foundation for Rust-based grid applications, system utilities, and any tooling that requires direct, high-performance interaction with grid nodes and on-chain state.
 
-The `GridClient` implementation in [mod.rs](/home/xmonader/wspace/geomind/sdk-grid-rust/src/grid_client/mod.rs) currently supports:
+## What this repository contains
 
-- TFChain twin lookup and relay setup
-- Node contract creation on TFChain
-- RMB JWT signing and websocket transport
-- RMB encrypted response handling
-- `network-light` deployment
-- `vm-light` deployment
-- full `zmachine` deployment
-- attached volume creation for VM workloads
-- contract cancellation helpers
+- `GridClient` and `GridClientConfig` — Core async client for chain and node operations.
+- Deployment builders and specs — `VmLightDeployment`, `VmDeployment`, `NetworkLightSpec`, `FullNetworkSpec`, `VolumeMountSpec`, `NodePlacement`, `NodeRequirements`, and related types.
+- Network presets — Built-in configurations for devnet, qanet, testnet, and mainnet.
+- Examples — Working examples for VM deployment, public VMs, network attachment, volume mounts, contract cancellation, and RMB token inspection.
+- Pure Rust test helpers — Mock deployers and state reconstruction utilities for local testing without live chain access.
 
-The Rust-only deployment path is exercised by [deploy_small_vm.rs](/home/xmonader/wspace/geomind/sdk-grid-rust/examples/deploy_small_vm.rs), [deploy_custom_vm.rs](/home/xmonader/wspace/geomind/sdk-grid-rust/examples/deploy_custom_vm.rs), and [deploy_public_vm.rs](/home/xmonader/wspace/geomind/sdk-grid-rust/examples/deploy_public_vm.rs).
+## Role in the stack
+
+The SDK operates at the client layer, bridging Rust applications to the grid's on-chain and node-level APIs. It connects to TFChain via substrate websockets for contract creation and twin lookup, to the grid proxy for node discovery, and to the RMB relay for encrypted command and control traffic to individual nodes. It is used by automation tools, system utilities, and any Rust service that needs to provision or manage grid workloads programmatically.
+
+## Relation to ThreeFold
+
+This technology is used within the ThreeFold ecosystem and was first deployed on the ThreeFold Grid. The component itself is designed as reusable infrastructure technology and should be understood by its technical function first, independent of any specific deployment.
+
+## Ownership
+
+This repository is owned and maintained by TF-Tech NV, a Belgian company responsible for the development and maintenance of this technology.
 
 ## Quick Start
 
@@ -268,4 +276,4 @@ cargo check --examples
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-Copyright (c) TFTech NV.
+Copyright (c) TF-Tech NV.
