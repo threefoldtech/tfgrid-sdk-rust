@@ -6,8 +6,8 @@ use std::{
 };
 
 use tfgrid_sdk_rust::{
-    DEV_NETWORK, GridClient, GridClientConfig, NetworkLightSpec, NodeRequirements, VmLightDeployment,
-    VmLightSpec, zos,
+    DEV_NETWORK, GridClient, GridClientConfig, NetworkLightSpec, NodeRequirements,
+    VmLightDeployment, VmLightSpec, zos,
 };
 
 /// Deploy a `vm-light` reachable over a Mycelium IP.
@@ -77,7 +77,11 @@ fn load_ssh_key() -> Result<String, std::io::Error> {
     }
 
     let home = env::var("HOME").unwrap_or_default();
-    let candidates = [".ssh/id_ed25519.pub", ".ssh/id_rsa.pub", ".ssh/id_ecdsa.pub"];
+    let candidates = [
+        ".ssh/id_ed25519.pub",
+        ".ssh/id_rsa.pub",
+        ".ssh/id_ecdsa.pub",
+    ];
     for candidate in candidates {
         let path = PathBuf::from(&home).join(candidate);
         if path.exists() {

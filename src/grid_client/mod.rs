@@ -787,8 +787,14 @@ impl GridClient {
         vm_ip: &str,
         ssh_key: Option<&str>,
     ) -> Result<DeploymentOutcome, GridError> {
-        self.deploy_vm_light_on_existing_network(node_id, node_twin_id, network_name, vm_ip, ssh_key)
-            .await
+        self.deploy_vm_light_on_existing_network(
+            node_id,
+            node_twin_id,
+            network_name,
+            vm_ip,
+            ssh_key,
+        )
+        .await
     }
 
     pub async fn deploy_gateway_name(
@@ -1494,7 +1500,8 @@ impl GridClient {
             .collect();
         if candidates.is_empty() {
             return Err(GridError::NotFound(
-                "no node with network + zmachine capabilities and sufficient free resources".to_string(),
+                "no node with network + zmachine capabilities and sufficient free resources"
+                    .to_string(),
             ));
         }
         Ok(candidates)
