@@ -59,6 +59,11 @@ pub use types::{
 
 const RMB_SCHEMA: &str = "application/json";
 
+/// Maximum number of grid-proxy candidate nodes the auto-placement path will
+/// attempt before giving up. Bounds wasted time and transient contract churn
+/// when leading candidates are unresponsive.
+const MAX_PLACEMENT_CANDIDATES: usize = 5;
+
 pub const DEV_NETWORK: &str = "dev";
 pub const QA_NETWORK: &str = "qa";
 pub const TEST_NETWORK: &str = "test";
@@ -628,7 +633,9 @@ impl GridClient {
         Ok(client)
     }
 
-    pub async fn deploy_small_vm(
+    /// Deploy a minimal `vm-light` (zmachine-light) workload on an
+    /// auto-selected node with a freshly created `network-light`.
+    pub async fn deploy_small_vm_light(
         &self,
         ssh_key: Option<&str>,
     ) -> Result<DeploymentOutcome, GridError> {
@@ -644,6 +651,19 @@ impl GridClient {
         .await
     }
 
+    /// Deprecated alias for [`GridClient::deploy_small_vm_light`]. This name
+    /// hid the fact that it deploys a `vm-light`, not a full `zmachine` VM.
+    #[deprecated(
+        since = "0.1.0",
+        note = "use deploy_small_vm_light; this deploys a vm-light, not a full vm"
+    )]
+    pub async fn deploy_small_vm(
+        &self,
+        ssh_key: Option<&str>,
+    ) -> Result<DeploymentOutcome, GridError> {
+        self.deploy_small_vm_light(ssh_key).await
+    }
+
     pub async fn deploy_vm_light(
         &self,
         request: VmLightDeployment,
@@ -651,8 +671,11 @@ impl GridClient {
         validate_vm_light_request(&request)?;
         match &request.placement {
             NodePlacement::Auto(requirements) => {
-                let node = self.pick_node(requirements).await?;
-                self.deploy_vm_light_on_node(node, request).await
+                let candidates = self.pick_nodes(requirements).await?;
+                self.deploy_with_failover(candidates, |node| {
+                    self.deploy_vm_light_on_node(node, request.clone())
+                })
+                .await
             }
             NodePlacement::Fixed {
                 node_id,
@@ -668,14 +691,17 @@ impl GridClient {
         validate_vm_request(&request)?;
         match &request.placement {
             NodePlacement::Auto(requirements) => {
-                let node = self
-                    .pick_zmachine_node(
+                let candidates = self
+                    .pick_zmachine_nodes(
                         requirements,
                         request.vm.public_ipv4,
                         request.vm.public_ipv6,
                     )
                     .await?;
-                self.deploy_vm_on_node(node, request).await
+                self.deploy_with_failover(candidates, |node| {
+                    self.deploy_vm_on_node(node, request.clone())
+                })
+                .await
             }
             NodePlacement::Fixed {
                 node_id,
@@ -687,7 +713,42 @@ impl GridClient {
         }
     }
 
-    pub async fn deploy_vm_on_existing_network(
+    /// Try each candidate node in order, returning the first successful
+    /// deployment. On failure the per-node deploy path already rolls back any
+    /// contracts it created, so we simply advance to the next candidate.
+    async fn deploy_with_failover<F, Fut>(
+        &self,
+        candidates: Vec<ProxyNode>,
+        mut deploy: F,
+    ) -> Result<DeploymentOutcome, GridError>
+    where
+        F: FnMut(ProxyNode) -> Fut,
+        Fut: std::future::Future<Output = Result<DeploymentOutcome, GridError>>,
+    {
+        let total = candidates.len();
+        let mut last_err = None;
+        for (idx, node) in candidates.into_iter().enumerate() {
+            let node_id = node.node_id;
+            match deploy(node).await {
+                Ok(outcome) => return Ok(outcome),
+                Err(err) => {
+                    trace_step(format!(
+                        "node {node_id} failed (candidate {}/{}): {err}",
+                        idx + 1,
+                        total
+                    ));
+                    last_err = Some(err);
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
+            GridError::NotFound("no candidate node accepted the deployment".to_string())
+        }))
+    }
+
+    /// Deploy a `vm-light` (zmachine-light) onto an existing `network-light`
+    /// contract on a fixed node.
+    pub async fn deploy_vm_light_on_existing_network(
         &self,
         node_id: u32,
         node_twin_id: u32,
@@ -711,6 +772,23 @@ impl GridClient {
             vm,
         })
         .await
+    }
+
+    /// Deprecated alias for [`GridClient::deploy_vm_light_on_existing_network`].
+    #[deprecated(
+        since = "0.1.0",
+        note = "use deploy_vm_light_on_existing_network; this deploys a vm-light, not a full vm"
+    )]
+    pub async fn deploy_vm_on_existing_network(
+        &self,
+        node_id: u32,
+        node_twin_id: u32,
+        network_name: &str,
+        vm_ip: &str,
+        ssh_key: Option<&str>,
+    ) -> Result<DeploymentOutcome, GridError> {
+        self.deploy_vm_light_on_existing_network(node_id, node_twin_id, network_name, vm_ip, ssh_key)
+            .await
     }
 
     pub async fn deploy_gateway_name(
@@ -937,6 +1015,47 @@ impl GridClient {
         node: ProxyNode,
         request: VmLightDeployment,
     ) -> Result<DeploymentOutcome, GridError> {
+        let node_twin = node.twin_id;
+        let mut created: Vec<u64> = Vec::new();
+        let result = self
+            .deploy_vm_light_on_node_inner(&node, request, &mut created)
+            .await;
+        if result.is_err() {
+            self.rollback_contracts(node_twin, &created).await;
+        }
+        result
+    }
+
+    /// Roll back contracts created during a failed deployment: ask the node to
+    /// drop the deployment over RMB (best effort), then cancel the on-chain
+    /// contract so it stops billing. Cancels in reverse creation order.
+    async fn rollback_contracts(&self, node_twin: u32, contract_ids: &[u64]) {
+        for &id in contract_ids.iter().rev() {
+            if id == 0 {
+                continue;
+            }
+            let _ = self
+                .rmb_call::<_, serde_json::Value>(
+                    node_twin,
+                    "zos.deployment.delete",
+                    &json!({ "contract_id": id }),
+                    None,
+                )
+                .await;
+            if let Err(err) = self.cancel_contract(id).await {
+                trace_step(format!("rollback: failed to cancel contract {id}: {err}"));
+            } else {
+                trace_step(format!("rollback: cancelled contract {id}"));
+            }
+        }
+    }
+
+    async fn deploy_vm_light_on_node_inner(
+        &self,
+        node: &ProxyNode,
+        request: VmLightDeployment,
+        created: &mut Vec<u64>,
+    ) -> Result<DeploymentOutcome, GridError> {
         trace_step(format!(
             "selected node {} twin {}",
             node.node_id, node.twin_id
@@ -985,6 +1104,7 @@ impl GridClient {
                 .map_err(|err| GridError::backend(format!("create network contract: {err}")))?;
                 let network_contract_id =
                     self.wait_for_contract(node.node_id, &network_hash).await?;
+                created.push(network_contract_id);
                 trace_step(format!("network contract id {network_contract_id}"));
                 network_deployment.contract_id = network_contract_id;
                 self.deploy_and_confirm(node.twin_id, &network_deployment)
@@ -1023,6 +1143,7 @@ impl GridClient {
         .await
         .map_err(|err| GridError::backend(format!("create vm contract: {err}")))?;
         let vm_contract_id = self.wait_for_contract(node.node_id, &vm_hash).await?;
+        created.push(vm_contract_id);
         trace_step(format!("vm contract id {vm_contract_id}"));
         vm_deployment.contract_id = vm_contract_id;
         self.deploy_and_confirm(node.twin_id, &vm_deployment)
@@ -1087,6 +1208,23 @@ impl GridClient {
         node: ProxyNode,
         request: VmDeployment,
     ) -> Result<DeploymentOutcome, GridError> {
+        let node_twin = node.twin_id;
+        let mut created: Vec<u64> = Vec::new();
+        let result = self
+            .deploy_vm_on_node_inner(&node, request, &mut created)
+            .await;
+        if result.is_err() {
+            self.rollback_contracts(node_twin, &created).await;
+        }
+        result
+    }
+
+    async fn deploy_vm_on_node_inner(
+        &self,
+        node: &ProxyNode,
+        request: VmDeployment,
+        created: &mut Vec<u64>,
+    ) -> Result<DeploymentOutcome, GridError> {
         trace_step(format!(
             "selected node {} twin {}",
             node.node_id, node.twin_id
@@ -1148,6 +1286,7 @@ impl GridClient {
                 .map_err(|err| GridError::backend(format!("create network contract: {err}")))?;
                 let network_contract_id =
                     self.wait_for_contract(node.node_id, &network_hash).await?;
+                created.push(network_contract_id);
                 trace_step(format!("network contract id {network_contract_id}"));
                 network_deployment.contract_id = network_contract_id;
                 self.deploy_and_confirm(node.twin_id, &network_deployment)
@@ -1181,6 +1320,7 @@ impl GridClient {
         .await
         .map_err(|err| GridError::backend(format!("create vm contract: {err}")))?;
         let vm_contract_id = self.wait_for_contract(node.node_id, &vm_hash).await?;
+        created.push(vm_contract_id);
         vm_deployment.contract_id = vm_contract_id;
         self.deploy_and_confirm(node.twin_id, &vm_deployment)
             .await
@@ -1237,18 +1377,32 @@ impl GridClient {
         })
     }
 
-    async fn pick_node(&self, requirements: &NodeRequirements) -> Result<ProxyNode, GridError> {
+    /// Return up to [`MAX_PLACEMENT_CANDIDATES`] `vm-light`-capable nodes, in
+    /// grid-proxy order, that the caller's twin can deploy on. The deploy path
+    /// tries them in turn so a single unresponsive node doesn't fail placement.
+    async fn pick_nodes(
+        &self,
+        requirements: &NodeRequirements,
+    ) -> Result<Vec<ProxyNode>, GridError> {
         let response = self
             .http
             .get(format!("{}/nodes", self.grid_proxy_url))
-            .query(&[("status", "up")])
+            .query(&[
+                ("status", "up".to_string()),
+                ("healthy", "true".to_string()),
+                ("features", "network-light,zmachine-light".to_string()),
+                ("free_mru", requirements.min_memory_bytes.to_string()),
+                ("free_sru", requirements.min_rootfs_bytes.to_string()),
+                ("available_for", self.identity.twin_id.to_string()),
+                ("size", "500".to_string()),
+            ])
             .send()
             .await
             .map_err(|err| GridError::backend(err.to_string()))?;
         let nodes: Vec<ProxyNode> = parse_json_response(response, "grid proxy /nodes").await?;
-        nodes
+        let candidates: Vec<ProxyNode> = nodes
             .into_iter()
-            .find(|node| {
+            .filter(|node| {
                 node.status == "up"
                     && node.healthy
                     && has_feature(node, "network-light")
@@ -1261,30 +1415,50 @@ impl GridClient {
                         .saturating_sub(node.used_resources.cru)
                         >= requirements.min_cru
             })
-            .ok_or_else(|| {
-                GridError::NotFound(
-                    "no devnet node with network-light + zmachine-light".to_string(),
-                )
-            })
+            .take(MAX_PLACEMENT_CANDIDATES)
+            .collect();
+        if candidates.is_empty() {
+            return Err(GridError::NotFound(
+                "no node with network-light + zmachine-light capabilities and sufficient free resources".to_string(),
+            ));
+        }
+        Ok(candidates)
     }
 
-    async fn pick_zmachine_node(
+    /// Return up to [`MAX_PLACEMENT_CANDIDATES`] full `zmachine`-capable nodes,
+    /// in grid-proxy order, matching the requested public-IP requirements.
+    async fn pick_zmachine_nodes(
         &self,
         requirements: &NodeRequirements,
         needs_public_ipv4: bool,
         needs_public_ipv6: bool,
-    ) -> Result<ProxyNode, GridError> {
+    ) -> Result<Vec<ProxyNode>, GridError> {
+        let mut query = vec![
+            ("status", "up".to_string()),
+            ("healthy", "true".to_string()),
+            ("features", "network,zmachine,volume".to_string()),
+            ("free_mru", requirements.min_memory_bytes.to_string()),
+            ("free_sru", requirements.min_rootfs_bytes.to_string()),
+            ("available_for", self.identity.twin_id.to_string()),
+            ("size", "500".to_string()),
+        ];
+        if needs_public_ipv4 {
+            query.push(("ipv4", "true".to_string()));
+        }
+        if needs_public_ipv6 {
+            query.push(("ipv6", "true".to_string()));
+        }
         let response = self
             .http
             .get(format!("{}/nodes", self.grid_proxy_url))
-            .query(&[("status", "up")])
+            .query(&query)
             .send()
             .await
             .map_err(|err| GridError::backend(err.to_string()))?;
         let nodes: Vec<ProxyNode> = parse_json_response(response, "grid proxy /nodes").await?;
-        nodes
+        let candidates: Vec<ProxyNode> = nodes
             .into_iter()
-            .find(|node| {
+            .filter(|node| {
                 let has_base = node.status == "up"
                     && node.healthy
                     && has_feature(node, "network")
@@ -1316,11 +1490,14 @@ impl GridClient {
                 }
                 true
             })
-            .ok_or_else(|| {
-                GridError::NotFound(
-                    "no devnet node with network + zmachine capabilities".to_string(),
-                )
-            })
+            .take(MAX_PLACEMENT_CANDIDATES)
+            .collect();
+        if candidates.is_empty() {
+            return Err(GridError::NotFound(
+                "no node with network + zmachine capabilities and sufficient free resources".to_string(),
+            ));
+        }
+        Ok(candidates)
     }
 
     async fn get_free_wg_port(&self, node_twin_id: u32) -> Result<u16, GridError> {
