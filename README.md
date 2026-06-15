@@ -43,7 +43,7 @@ export GRID_NETWORK=dev
 Run one of the live examples:
 
 ```bash
-cargo run --example deploy_small_vm
+cargo run --example deploy_small_vm_light
 ```
 
 Supported `GRID_NETWORK` values:
@@ -90,7 +90,7 @@ client.deploy_vm_light(request).await?;
 client.deploy_vm(request).await?;
 ```
 
-`deploy_small_vm()` still exists as a convenience wrapper for a minimal `vm-light`.
+`deploy_small_vm_light()` is a convenience wrapper for a minimal `vm-light`.
 
 Typical builder-style `vm-light` usage:
 
@@ -202,16 +202,16 @@ Lifecycle helpers:
 
 ## Examples
 
-Deploy a small VM on the selected preset network:
+Deploy a small `vm-light` on the selected preset network:
 
 ```bash
-cargo run --example deploy_small_vm
+cargo run --example deploy_small_vm_light
 ```
 
-Deploy a configurable VM on the selected preset network:
+Deploy a configurable `vm-light` on the selected preset network:
 
 ```bash
-cargo run --example deploy_custom_vm
+cargo run --example deploy_custom_vm_light
 ```
 
 Deploy a VM on an existing `network-light` contract:
@@ -221,13 +221,13 @@ export NODE_ID=327
 export NODE_TWIN_ID=11394
 export NETWORK_NAME=rust_net_light_123
 export VM_IP=10.50.2.5
-cargo run --example deploy_vm_on_existing_network
+cargo run --example deploy_vm_light_on_existing_network
 ```
 
 Deploy a `vm-light` with an attached volume:
 
 ```bash
-cargo run --example deploy_vm_with_volume
+cargo run --example deploy_vm_light_with_volume
 ```
 
 Deploy a full `zmachine` with public IPv4:
@@ -254,7 +254,7 @@ cargo run --example print_rmb_token
 Enable client tracing when debugging relay or workload behavior:
 
 ```bash
-TFGRID_DEBUG=1 cargo run --example deploy_small_vm
+TFGRID_DEBUG=1 cargo run --example deploy_small_vm_light
 ```
 
 ## Verification

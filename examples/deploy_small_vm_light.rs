@@ -8,7 +8,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let network = env::var("GRID_NETWORK").unwrap_or_else(|_| DEV_NETWORK.to_string());
     let ssh_key = load_ssh_key().ok();
     let client = GridClient::new(&mnemonic, GridClientConfig::from_network(&network)?).await?;
-    let outcome = client.deploy_small_vm(ssh_key.as_deref()).await?;
+    let outcome = client.deploy_small_vm_light(ssh_key.as_deref()).await?;
     println!("{}", serde_json::to_string_pretty(&outcome)?);
     Ok(())
 }
