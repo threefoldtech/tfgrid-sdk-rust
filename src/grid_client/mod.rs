@@ -1847,6 +1847,61 @@ impl GridClient {
         }
     }
 
+    /// Create a node contract on-chain for a deployment that already carries the given
+    /// md5 hash and metadata — e.g. an existing deployment being **relocated** to a new
+    /// node (the contract id is excluded from the deployment hash, so the source
+    /// signature stays valid). Submits the `create_node_contract` extrinsic and returns
+    /// the new contract id (looked up via grid-proxy once the contract is on-chain).
+    /// Low-level companion to [`GridClient::node_call`] for migration/relocation.
+    pub async fn create_node_contract(
+        &self,
+        node_id: u32,
+        deployment_data: &str,
+        deployment_hash_hex: &str,
+        public_ips: u32,
+    ) -> Result<u64, GridError> {
+        submit_create_node_contract(
+            &self.chain,
+            &self.signer,
+            node_id,
+            deployment_data,
+            deployment_hash_hex,
+            public_ips,
+        )
+        .await?;
+        self.wait_for_contract(node_id, deployment_hash_hex).await
+    }
+
+    /// Invoke an arbitrary node RMB command — a low-level escape hatch for zos RPCs
+    /// that have no dedicated typed helper on [`GridClient`].
+    ///
+    /// `command` is a zos method name such as `"zos.deployment.get"`; `payload` is
+    /// JSON-serialized as the request body and the JSON reply is deserialized into
+    /// `R` (use [`serde_json::Value`] for dynamic/empty replies). The call is signed
+    /// with this client's identity and routed through the configured relay, exactly
+    /// like the built-in deployment helpers.
+    ///
+    /// ```no_run
+    /// # async fn demo(client: &zos_sdk_rust::GridClient) -> Result<(), zos_sdk_rust::GridError> {
+    /// let deployment: serde_json::Value = client
+    ///     .node_call(node_twin_id, "zos.deployment.get", &serde_json::json!({ "contract_id": 42u64 }))
+    ///     .await?;
+    /// # let node_twin_id = 0u32; let _ = deployment; Ok(())
+    /// # }
+    /// ```
+    pub async fn node_call<T, R>(
+        &self,
+        node_twin_id: u32,
+        command: &str,
+        payload: &T,
+    ) -> Result<R, GridError>
+    where
+        T: Serialize,
+        R: for<'de> Deserialize<'de> + 'static,
+    {
+        self.rmb_call(node_twin_id, command, payload, None).await
+    }
+
     async fn rmb_call<T, R>(
         &self,
         destination_twin_id: u32,
